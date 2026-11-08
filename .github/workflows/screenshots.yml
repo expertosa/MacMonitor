@@ -1,15 +1,19 @@
 name: Screenshots
 
-# Manually run (Actions → Screenshots → Run workflow) to re-render the README images in docs/
-# from the current code and commit them to the selected branch.
+# Re-renders the README images in docs/ from the current code and commits them to the branch.
+# Run it from Actions → Screenshots → Run workflow, or push a commit whose message contains
+# "[screenshots]".
 on:
   workflow_dispatch:
+  push:
+    branches: ["**"]
 
 permissions:
   contents: write
 
 jobs:
   render:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[screenshots]')
     runs-on: macos-15
     defaults:
       run:
