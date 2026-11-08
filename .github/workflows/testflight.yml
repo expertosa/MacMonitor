@@ -1,10 +1,18 @@
 name: TestFlight
 
-# Archives the Mac App Store edition (with its widget) and uploads it to App Store Connect, where it
-# appears in TestFlight after Apple finishes processing (usually 10–30 minutes).
+# Archives the Mac App Store edition (with its widget) and uploads it to App Store Connect.
+# Apple then processes the build for TestFlight (usually 10–30 minutes). This workflow does not
+# submit the app for App Store review.
 #
 # Trigger: push a commit whose message contains "[testflight]", push a tag named testflight-<anything>,
 #          or run it from Actions → TestFlight → Run workflow (once this file is on the default branch).
+#
+# Versioning (do not generate these in CI):
+#   Marketing version (CFBundleShortVersionString) is the semver in the VERSION file, e.g. 1.1.0.
+#   Build number (CFBundleVersion) is CURRENT_PROJECT_VERSION in Xcode/project.yml. It must be a
+#   short sequential integer (1, 2, 3, …), never a timestamp or date. Bump that integer in a commit
+#   before the next upload, and only after App Store Connect has no equal or higher build for this
+#   marketing version.
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
 #   ASC_KEY_ID         App Store Connect API key ID
@@ -55,11 +63,41 @@ jobs:
         run: |
           echo "$ASC_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
           echo "AUTH=-allowProvisioningUpdates -authenticationKeyPath $RUNNER_TEMP/AuthKey.p8 -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID" >> "$GITHUB_ENV"
+      - name: Inspect latest Apple build
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          BUILD="$(awk -F'"' '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ { print $2; exit }' Xcode/project.yml)"
+          python3 scripts/asc_latest_build.py check \
+            --key "$RUNNER_TEMP/AuthKey.p8" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER_ID" \
+            --bundle-id com.tweetso.macmonitor \
+            --marketing "$VERSION" \
+            --build "$BUILD" | tee "$RUNNER_TEMP/asc-builds.json"
+          echo "Apple build check:" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/asc-builds.json" >> "$GITHUB_STEP_SUMMARY"
       - name: Archive
         run: |
           cd Xcode && xcodegen generate
-          VERSION="$(cat ../VERSION)"
-          BUILD="$(date -u +%y%m%d%H%M)"          # always increasing, unique per upload
+          VERSION="$(tr -d '[:space:]' < ../VERSION)"
+          case "$VERSION" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::Marketing version must be semver MAJOR.MINOR.PATCH (VERSION file is '$VERSION')."; exit 1 ;;
+          esac
+          IFS=. read -r major minor patch extra <<< "$VERSION"
+          if [[ -n "${extra:-}" || ! "$major" =~ ^([0-9]|[1-9][0-9]+)$ || ! "$minor" =~ ^([0-9]|[1-9][0-9]+)$ || ! "$patch" =~ ^([0-9]|[1-9][0-9]+)$ ]]; then
+            echo "::error::Marketing version must be semver MAJOR.MINOR.PATCH with no leading zeros (VERSION file is '$VERSION')."
+            exit 1
+          fi
+          BUILD="$(awk -F'"' '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ { print $2; exit }' project.yml)"
+          case "$BUILD" in
+            ''|*[!0-9]*|0*) bad=1 ;;
+            *) bad= ;;
+          esac
+          if [[ -n "$bad" || ${#BUILD} -gt 4 ]]; then
+            echo "::error::CFBundleVersion must be a short sequential integer (1–9999) from Xcode/project.yml CURRENT_PROJECT_VERSION (got '${BUILD:-empty}'). Timestamps and dates are not allowed."
+            exit 1
+          fi
           echo "Version $VERSION build $BUILD" | tee -a "$GITHUB_STEP_SUMMARY"
           xcodebuild -project MacMonitor.xcodeproj -scheme MacMonitorAppStore -configuration Release \
             -destination 'generic/platform=macOS' -archivePath "$RUNNER_TEMP/MacMonitor.xcarchive" \
@@ -72,4 +110,4 @@ jobs:
             -exportOptionsPlist ExportOptions.plist -exportPath "$RUNNER_TEMP/export" $AUTH > export.log 2>&1 \
             || { grep -iE "error|invalid|missing" export.log | head -60; tail -n 40 export.log; exit 1; }
           tail -n 15 export.log
-          echo "Uploaded. The build shows up in App Store Connect → TestFlight after processing." >> "$GITHUB_STEP_SUMMARY"
+          echo "Uploaded to TestFlight processing. This did not submit the app for App Store review." >> "$GITHUB_STEP_SUMMARY"

@@ -10,8 +10,11 @@ cd "$(dirname "$0")"
 APP_NAME="MacMonitor"
 BUNDLE_ID="com.tweetso.macmonitor"
 APP="$PWD/$APP_NAME.app"
-VERSION="$(cat VERSION 2>/dev/null || echo 1.0)"
-BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
+VERSION="$(tr -d '[:space:]' < VERSION 2>/dev/null || echo 1.0)"
+BUILD_NUMBER="$(awk -F'"' '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ { print $2; exit }' Xcode/project.yml)"
+case "$BUILD_NUMBER" in
+    ''|*[!0-9]*|0*) echo "CFBundleVersion must be a short sequential integer from Xcode/project.yml" >&2; exit 1 ;;
+esac
 
 if [[ "${UNIVERSAL:-0}" == "1" ]]; then
     ARCH_FLAGS=(--arch arm64 --arch x86_64)
