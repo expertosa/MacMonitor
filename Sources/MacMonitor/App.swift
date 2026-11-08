@@ -25,8 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private let prefs = Preferences.shared
     private var sampler: Sampler!
-    #if !APPSTORE
     private var remotes: RemoteManager!
+    #if !APPSTORE
     private var updates: UpdateChecker!
     #endif
     private var panel: DesktopPanel!
@@ -39,8 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var showItem: NSMenuItem!
     private var lockItem: NSMenuItem!
     private var loginItem: NSMenuItem!
-    #if !APPSTORE
     private var serversItem: NSMenuItem!
+    #if !APPSTORE
     private var updateItem: NSMenuItem!
     #endif
 
@@ -50,14 +50,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         sampler = Sampler(prefs: prefs)
         alerts = AlertManager(prefs: prefs)
-        #if APPSTORE
-        panel = DesktopPanel(sampler: sampler, prefs: prefs)
-        #else
         // Snapshot debug mode shows a fake 'linux-server' instead of connecting over SSH.
         remotes = RemoteManager(demo: snapshotMode)
+        #if !APPSTORE
         updates = UpdateChecker(prefs: prefs)
-        panel = DesktopPanel(sampler: sampler, remotes: remotes, prefs: prefs)
         #endif
+        panel = DesktopPanel(sampler: sampler, remotes: remotes, prefs: prefs)
         panel.locked = UserDefaults.standard.bool(forKey: Keys.locked)
         if UserDefaults.standard.bool(forKey: Keys.visible) && !snapshotMode { panel.orderFront(nil) }
 
@@ -76,11 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .sink { [weak self] _ in DispatchQueue.main.async { self?.updateStatusItem(self?.sampler.snapshot) } }
             .store(in: &subs)
 
-        #if APPSTORE
-        SnapshotExporter.scheduleIfRequested(sampler: sampler, prefs: prefs)
-        #else
         SnapshotExporter.scheduleIfRequested(sampler: sampler, remotes: remotes, prefs: prefs)
-        #endif
     }
 
     // MARK: Tick
@@ -94,7 +88,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         input.volumes = s.volumes.map { .init(id: $0.id, name: $0.name, usedFraction: $0.usedFraction) }
         input.batteryPercent = s.battery?.percent
         input.batteryCharging = s.battery.map { $0.charging || $0.onAC } ?? false
-        #if !APPSTORE
         input.servers = remotes.servers.map { srv in
             var offline = false
             if case .error = srv.status { offline = true }
@@ -105,9 +98,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                      rebootRequired: snap.rebootRequired == true)
         }
         widgetBridge.update(servers: remotes.servers.map(\.widgetServer))
-        #else
-        widgetBridge.update(servers: [])
-        #endif
         alerts.evaluate(input)
     }
 
@@ -146,14 +136,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         loginItem = item("Launch at Login", #selector(toggleLogin))
         [showItem, lockItem, loginItem].forEach { menu.addItem($0!) }
         menu.addItem(item("Settings…", #selector(openSettings), key: ","))
-        #if !APPSTORE
         menu.addItem(.separator())
         menu.addItem(item("Add Server…", #selector(addServer)))
+        #if !APPSTORE
         menu.addItem(item("Import from ~/.ssh/config…", #selector(importServers)))
+        #endif
         serversItem = NSMenuItem(title: "Servers", action: nil, keyEquivalent: "")
         serversItem.submenu = NSMenu(title: "Servers")
         menu.addItem(serversItem)
-        #endif
         menu.addItem(.separator())
         menu.addItem(item("Open Activity Monitor", #selector(openActivityMonitor)))
         menu.addItem(item("Open Disk Utility", #selector(openDiskUtility)))
@@ -178,8 +168,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lockItem.title = panel.locked ? "Unlock Position" : "Lock Position"
         lockItem.isEnabled = panel.isVisible
         loginItem.state = LoginItem.isEnabled ? .on : .off
-        #if !APPSTORE
         rebuildServersMenu()
+        #if !APPSTORE
         if let a = updates.available {
             updateItem.title = "Update Available: \(a.version)…"
         } else {
@@ -193,7 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func showSettings(tab: SettingsTab?) {
         if settings == nil {
             #if APPSTORE
-            settings = SettingsWindowController(prefs: prefs, alerts: alerts)
+            settings = SettingsWindowController(prefs: prefs, alerts: alerts, remotes: remotes)
             #else
             settings = SettingsWindowController(prefs: prefs, alerts: alerts, remotes: remotes, updates: updates)
             #endif
@@ -209,11 +199,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
     }
 
-    #if !APPSTORE
     func applicationWillTerminate(_ notification: Notification) {
-        remotes?.stopAll()          // SIGTERM every ssh child so no sessions are left behind
+        remotes?.stopAll()          // end every SSH session so none are left behind
     }
 
+    #if !APPSTORE
     @objc private func checkForUpdates() {
         if let a = updates.available {
             NSWorkspace.shared.open(a.url)
@@ -221,6 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             updates.check(userInitiated: true)
         }
     }
+    #endif
 
     // MARK: Servers
 
@@ -255,6 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             detail.addItem(.separator())
             add("Edit…", #selector(editServer(_:)))
             add(server.config.collapsed ? "Expand in Panel" : "Compact in Panel", #selector(toggleCollapsed(_:)))
+            if server.hostKeyMismatch { add("Trust New Host Key", #selector(trustHostKey(_:))) }
             add("Reconnect", #selector(reconnectServer(_:)))
             add("Remove", #selector(removeServer(_:)))
             entry.submenu = detail
@@ -286,8 +278,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func reconnectServer(_ sender: NSMenuItem) { server(sender)?.reconnect() }
 
     @objc private func editServer(_ sender: NSMenuItem) {
-        guard let s = server(sender), let cfg = ServerEditor.run(editing: s.config) else { return }
-        remotes.update(cfg)
+        guard let s = server(sender), let r = ServerEditor.run(editing: s.config) else { return }
+        remotes.update(r.config, secretsChanged: r.secretsChanged)
+    }
+
+    @objc private func trustHostKey(_ sender: NSMenuItem) {
+        guard let s = server(sender) else { return }
+        let alert = NSAlert()
+        alert.messageText = "Trust the new host key of \(s.config.name)?"
+        alert.informativeText = "Only do this if you know the server was reinstalled or its SSH keys were "
+            + "regenerated. Otherwise someone may be intercepting the connection."
+        alert.addButton(withTitle: "Trust New Key")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        remotes.trustNewHostKey(id: s.id)
     }
 
     @objc private func toggleCollapsed(_ sender: NSMenuItem) {
@@ -308,12 +314,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func addServer() {
-        if let cfg = ServerEditor.run() { remotes.add(cfg) }
+        if let r = ServerEditor.run() { remotes.add(r.config) }
     }
 
     @objc private func importServers() { showSettings(tab: .servers) }
     @objc private func manageServers() { showSettings(tab: .servers) }
-    #endif
 
     @objc private func toggleVisible() {
         let show = !panel.isVisible

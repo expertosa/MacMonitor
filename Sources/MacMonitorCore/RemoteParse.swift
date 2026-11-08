@@ -6,6 +6,27 @@ import Foundation
 
 // MARK: - Server configuration
 
+/// How a server is reached.
+public enum SSHAuthKind: String, Codable, CaseIterable, Sendable {
+    /// /usr/bin/ssh with the user's keys, agent and ~/.ssh/config (direct edition only).
+    case system
+    /// Built-in SSH client with a private key stored in the Keychain.
+    case key
+    /// Built-in SSH client with a password stored in the Keychain.
+    case password
+
+    public var label: String {
+        switch self {
+        case .system: return "System ssh (keys, agent, ~/.ssh/config)"
+        case .key: return "Private key file"
+        case .password: return "Password"
+        }
+    }
+
+    /// Uses the in-app SSH client (works inside the App Sandbox).
+    public var isBuiltIn: Bool { self != .system }
+}
+
 public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
     public var id: UUID
     public var name: String
@@ -19,10 +40,12 @@ public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
     public var collapsed: Bool
     /// Hide the per-filesystem bars in the desktop panel.
     public var hideDisks: Bool
+    /// Connection method. Secrets for .key / .password live in the Keychain, never here.
+    public var auth: SSHAuthKind
 
     public init(id: UUID = UUID(), name: String, host: String, user: String, port: Int = 22,
                 identityFile: String? = nil, services: [String] = [],
-                collapsed: Bool = false, hideDisks: Bool = false) {
+                collapsed: Bool = false, hideDisks: Bool = false, auth: SSHAuthKind = .system) {
         self.id = id
         self.name = name
         self.host = host
@@ -32,6 +55,7 @@ public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
         self.services = services
         self.collapsed = collapsed
         self.hideDisks = hideDisks
+        self.auth = auth
     }
 
     // Tolerant decoding: anything missing (older saved lists) gets a default.
@@ -47,6 +71,7 @@ public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
             .filter(ServerConfig.isValidServiceName)
         collapsed = try c.decodeIfPresent(Bool.self, forKey: .collapsed) ?? false
         hideDisks = try c.decodeIfPresent(Bool.self, forKey: .hideDisks) ?? false
+        auth = (try? c.decodeIfPresent(SSHAuthKind.self, forKey: .auth)) ?? .system
     }
 
     /// "user@host:port" for menus.
@@ -59,7 +84,7 @@ public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
     public var sshCommand: String {
         var parts = ["ssh"]
         if port != 22 { parts += ["-p", String(port)] }
-        if let id = identityFile, !id.isEmpty { parts += ["-i", id] }
+        if auth == .system, let id = identityFile, !id.isEmpty { parts += ["-i", id] }
         parts.append(user.isEmpty ? host : "\(user)@\(host)")
         return parts.joined(separator: " ")
     }
@@ -77,7 +102,7 @@ public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
     /// True when a change to `other` needs a new ssh session (as opposed to display-only fields).
     public func connectionDiffers(from other: ServerConfig) -> Bool {
         host != other.host || user != other.user || port != other.port
-            || identityFile != other.identityFile || services != other.services
+            || identityFile != other.identityFile || services != other.services || auth != other.auth
     }
 
     /// Unit names are pasted into the remote shell loop, so only allow a safe character set.

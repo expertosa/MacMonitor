@@ -13,21 +13,10 @@ final class DesktopPanel: NSPanel {
     private var subs: Set<AnyCancellable> = []
     private let sampler: Sampler
     private let prefs: Preferences
-    #if !APPSTORE
     private let remotes: RemoteManager
-    #endif
     private var lastLayoutKey: [Int] = []
     private var movingProgrammatically = false
 
-    #if APPSTORE
-    init(sampler: Sampler, prefs: Preferences) {
-        self.sampler = sampler
-        self.prefs = prefs
-        super.init(contentRect: NSRect(x: 0, y: 0, width: 240, height: 260),
-                   styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        setUp()
-    }
-    #else
     init(sampler: Sampler, remotes: RemoteManager, prefs: Preferences) {
         self.sampler = sampler
         self.remotes = remotes
@@ -36,7 +25,6 @@ final class DesktopPanel: NSPanel {
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         setUp()
     }
-    #endif
 
     private func setUp() {
         isOpaque = false
@@ -55,11 +43,7 @@ final class DesktopPanel: NSPanel {
         effect.maskImage = DesktopPanel.roundedMask(radius: radius)
         applyAppearance()
 
-        #if APPSTORE
-        let hosting = NSHostingView(rootView: MonitorView(sampler: sampler, prefs: prefs))
-        #else
         let hosting = NSHostingView(rootView: MonitorView(sampler: sampler, remotes: remotes, prefs: prefs))
-        #endif
         self.hosting = hosting
         lastLayoutKey = currentLayoutKey()
         let size = Self.fittingSize(for: hosting, scale: prefs.size.scale)
@@ -80,14 +64,12 @@ final class DesktopPanel: NSPanel {
         // Re-measure (keeping the anchored edge fixed) whenever something can change the height:
         // sections appearing/disappearing, settings, servers. Each trigger only compares one
         // combined layout key, so the per-tick cost is negligible.
-        var triggers: [AnyPublisher<Void, Never>] = [
+        let triggers: [AnyPublisher<Void, Never>] = [
             sampler.$snapshot.map { _ in () }.eraseToAnyPublisher(),
             prefs.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
+            remotes.$servers.map { _ in () }.eraseToAnyPublisher(),
+            remotes.layoutChanged.eraseToAnyPublisher(),
         ]
-        #if !APPSTORE
-        triggers.append(remotes.$servers.map { _ in () }.eraseToAnyPublisher())
-        triggers.append(remotes.layoutChanged.eraseToAnyPublisher())
-        #endif
         Publishers.MergeMany(triggers)
             .sink { [weak self] _ in
                 // @Published fires in willSet: look at the new state on the next main-queue turn.
@@ -129,8 +111,8 @@ final class DesktopPanel: NSPanel {
                    prefs.sections.map(\.rawValue).sorted().joined().hashValue]
         #if !APPSTORE
         key += [s.sensors.isEmpty ? 0 : 1, s.processes.count]
-        key += remotes.layoutKey
         #endif
+        key += remotes.layoutKey
         return key
     }
 

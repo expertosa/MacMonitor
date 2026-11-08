@@ -4,12 +4,12 @@
 # Targets
 #   MacMonitorDirect    full edition (SSH servers, sensors, update checks). Not sandboxed,
 #                       Hardened Runtime, distributed as a notarized DMG / Homebrew cask.
-#   MacMonitorAppStore  Mac App Store edition, compiled with -D APPSTORE (no SSH / SMC / process
-#                       list, because App Sandbox forbids them). Sandboxed.
+#   MacMonitorAppStore  Mac App Store edition, compiled with -D APPSTORE. Sandboxed: servers use the
+#                       built-in SSH client (MacMonitorSSH) instead of /usr/bin/ssh; no SMC / process list.
 #   MacMonitorWidget    WidgetKit extension embedded in both apps (sandboxed). Reads server
 #                       state that the app writes to the shared App Group container.
 # Shared code comes from the local Swift package at the repository root
-# (MacMonitorCore + MacMonitorUI); the app sources are Sources/MacMonitor.
+# (MacMonitorCore + MacMonitorUI + MacMonitorSSH); the app sources are Sources/MacMonitor.
 name: MacMonitor
 options:
   bundleIdPrefix: com.tweetso
@@ -46,6 +46,8 @@ targetTemplates:
         product: MacMonitorCore
       - package: MacMonitorKit
         product: MacMonitorUI
+      - package: MacMonitorKit
+        product: MacMonitorSSH
       - target: MacMonitorWidget
         embed: true
       - sdk: WidgetKit.framework

@@ -38,6 +38,25 @@ final class RemoteParseTests: XCTestCase {
         XCTAssertFalse(list[0].collapsed)
         XCTAssertEqual(list[1].port, 2200)
         XCTAssertEqual(list[1].services, ["nginx"])
+        XCTAssertEqual(list[0].auth, .system)
+    }
+
+    func testAuthRoundTripAndConnectionDiff() throws {
+        var a = ServerConfig(name: "n", host: "h", user: "u", auth: .password)
+        let data = try JSONEncoder().encode(a)
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).lowercased().contains("secret"))
+        let b = try JSONDecoder().decode(ServerConfig.self, from: data)
+        XCTAssertEqual(b.auth, .password)
+        XCTAssertTrue(SSHAuthKind.password.isBuiltIn)
+        XCTAssertFalse(SSHAuthKind.system.isBuiltIn)
+        var c = b
+        c.auth = .key
+        XCTAssertTrue(c.connectionDiffers(from: b))
+        a.collapsed = true
+        XCTAssertFalse(a.connectionDiffers(from: b))
+        // An unknown auth value from a newer version falls back to .system.
+        let json = #"{"host":"h","auth":"kerberos"}"#
+        XCTAssertEqual(try JSONDecoder().decode(ServerConfig.self, from: Data(json.utf8)).auth, .system)
     }
 
     func testSSHCommandAndURL() {

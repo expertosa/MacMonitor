@@ -8,5 +8,11 @@
 	<array>
 		<string>NWPTRYJ9FL.com.tweetso.macmonitor</string>
 	</array>
+	<!-- Built-in SSH client: outgoing connections to the user's servers. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- Reading the private key file the user picks in the server editor. -->
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
 </dict>
 </plist>

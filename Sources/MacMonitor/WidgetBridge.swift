@@ -36,7 +36,6 @@ final class WidgetBridge {
     }
 }
 
-#if !APPSTORE
 extension RemoteSampler {
     var widgetServer: WidgetServer {
         let s = snapshot
@@ -54,4 +53,3 @@ extension RemoteSampler {
                             load1: s.load.first, warnings: WidgetServer.warnings(for: s))
     }
 }
-#endif

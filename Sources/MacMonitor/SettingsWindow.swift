@@ -34,8 +34,8 @@ enum LoginItem {
 @MainActor
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     #if APPSTORE
-    init(prefs: Preferences, alerts: AlertManager) {
-        let view = SettingsView(prefs: prefs, alerts: alerts)
+    init(prefs: Preferences, alerts: AlertManager, remotes: RemoteManager) {
+        let view = SettingsView(prefs: prefs, alerts: alerts, remotes: remotes)
         super.init(window: Self.makeWindow(NSHostingController(rootView: view)))
     }
     #else
@@ -73,8 +73,8 @@ enum SettingsTab: String { case general, panel, alerts, servers }
 struct SettingsView: View {
     @ObservedObject var prefs: Preferences
     let alerts: AlertManager
-    #if !APPSTORE
     @ObservedObject var remotes: RemoteManager
+    #if !APPSTORE
     @ObservedObject var updates: UpdateChecker
     #endif
     @State private var tab = SettingsTab.general.rawValue
@@ -84,10 +84,8 @@ struct SettingsView: View {
             general.tabItem { Label("General", systemImage: "gearshape") }.tag(SettingsTab.general.rawValue)
             panel.tabItem { Label("Desktop Panel", systemImage: "rectangle.on.rectangle") }.tag(SettingsTab.panel.rawValue)
             alertsTab.tabItem { Label("Alerts", systemImage: "bell") }.tag(SettingsTab.alerts.rawValue)
-            #if !APPSTORE
             ServersSettings(remotes: remotes).tabItem { Label("Servers", systemImage: "server.rack") }
                 .tag(SettingsTab.servers.rawValue)
-            #endif
         }
         .padding(16)
         .frame(width: 560, height: 480)
@@ -207,7 +205,6 @@ struct SettingsView: View {
                 percentStepper("Disk fuller than", value: $prefs.alerts.diskPercent)
                 percentStepper("Battery below", value: $prefs.alerts.batteryPercent)
             }
-            #if !APPSTORE
             Section("Servers") {
                 minutesStepper("Unreachable for", value: $prefs.alerts.serverOfflineMinutes)
                 percentStepper("CPU above", value: $prefs.alerts.serverCPUPercent)
@@ -216,7 +213,6 @@ struct SettingsView: View {
                 Toggle("Watched service stops", isOn: $prefs.alerts.services)
                 Toggle("Reboot required", isOn: $prefs.alerts.reboot)
             }
-            #endif
         }
         .formStyle(.grouped)
         .disabled(false)
@@ -237,9 +233,14 @@ struct SettingsView: View {
 
 // MARK: - Servers
 
-#if !APPSTORE
 struct ServersSettings: View {
     @ObservedObject var remotes: RemoteManager
+
+    #if APPSTORE
+    static let emptyHint = "Add a Linux or Mac server. MacMonitor logs in with a private key file or a password, both kept in your Keychain."
+    #else
+    static let emptyHint = "Add a Linux or Mac server that accepts SSH key login, or import hosts from ~/.ssh/config."
+    #endif
     @State private var importing = false
     @State private var candidates: [SSHHostEntry] = []
     @State private var selected: Set<String> = []
@@ -250,7 +251,7 @@ struct ServersSettings: View {
                 VStack(spacing: 6) {
                     Image(systemName: "server.rack").font(.largeTitle).foregroundColor(.secondary)
                     Text("No servers yet").font(.headline)
-                    Text("Add a Linux or Mac server that accepts SSH key login, or import hosts from ~/.ssh/config.")
+                    Text(Self.emptyHint)
                         .multilineTextAlignment(.center)
                         .foregroundColor(.secondary)
                 }
@@ -264,8 +265,9 @@ struct ServersSettings: View {
             }
             HStack {
                 Button("Add Server…") {
-                    if let cfg = ServerEditor.run() { remotes.add(cfg) }
+                    if let r = ServerEditor.run() { remotes.add(r.config) }
                 }
+                #if !APPSTORE
                 Button("Import from ~/.ssh/config…") {
                     candidates = SSHConfigImporter.load().filter { e in
                         !remotes.servers.contains { $0.config.host == e.alias }
@@ -273,6 +275,7 @@ struct ServersSettings: View {
                     selected = Set(candidates.map(\.alias))
                     importing = true
                 }
+                #endif
                 Spacer()
             }
         }
@@ -343,7 +346,11 @@ struct ServerRow: View {
                 .disabled(index == 0).buttonStyle(.borderless)
             Button { remotes.move(id: server.id, by: 1) } label: { Image(systemName: "chevron.down") }
                 .disabled(index == count - 1).buttonStyle(.borderless)
-            Button("Edit…") { if let c = ServerEditor.run(editing: server.config) { remotes.update(c) } }
+            Button("Edit…") {
+                if let r = ServerEditor.run(editing: server.config) {
+                    remotes.update(r.config, secretsChanged: r.secretsChanged)
+                }
+            }
             Button(role: .destructive) { remotes.remove(id: server.id) } label: { Image(systemName: "trash") }
                 .buttonStyle(.borderless)
         }
@@ -358,4 +365,3 @@ struct ServerRow: View {
         }
     }
 }
-#endif

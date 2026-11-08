@@ -32,6 +32,12 @@ All notable changes to MacMonitor. Versions follow the `VERSION` file and `vX.Y.
 - `MacMonitorCore` library with unit tests (runs on Linux and macOS), GitHub Actions CI,
   release workflow producing a DMG + ZIP, Homebrew cask template, MIT license.
 
+- **Built-in SSH client** (Citadel / SwiftNIO SSH, new `MacMonitorSSH` module): log in with a
+  private key file (ed25519 / RSA, optional passphrase) or a password, stored in the Keychain;
+  trust-on-first-use host keys with "Trust New Host Key". Works in both editions, so **the Mac App
+  Store edition now monitors servers** too (sandbox entitlements: network client, user-selected files).
+- Sessions that stop delivering data for 30 s are restarted automatically.
+
 ### Changed
 - Code split into `MacMonitorCore` (parsing, sampling, alerts), `MacMonitorUI` (shared SwiftUI
   views used by the panel and the widget) and the app target. `Panel.swift` was split up.

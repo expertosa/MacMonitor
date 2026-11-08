@@ -21,8 +21,10 @@ and your **Linux and Mac servers over plain SSH**, with nothing to install on th
 - Widgets (Notification Center, and the desktop on macOS 14+): *This Mac* in small, medium and
   large; the large one also lists your servers.
 
-**Servers (direct edition)**
-- One long-lived `ssh` session per server runs a tiny POSIX `sh` loop. No agent, no daemon.
+**Servers**
+- One long-lived SSH session per server runs a tiny POSIX `sh` loop. No agent, no daemon.
+- Log in with the system `ssh` (your keys, ssh-agent, `~/.ssh/config`; direct edition) or the
+  built-in SSH client with a private key file or a password kept in the Keychain (both editions).
 - Linux: CPU, memory, every real filesystem, network, load, uptime, Docker containers, chosen
   systemd services, `reboot-required`, pending apt/dnf updates.
 - macOS servers: CPU, memory, disks, network, load, uptime.
@@ -53,7 +55,9 @@ Center → **Edit Widgets**, then search for *MacMonitor*.
 | | Direct (DMG / Homebrew) | Mac App Store |
 | --- | --- | --- |
 | Menu bar, panel, widgets, alerts | ✓ | ✓ |
-| SSH servers + Servers widget | ✓ | – (App Sandbox can't run `ssh`) |
+| SSH servers + Servers widget | ✓ | ✓ (built-in SSH client) |
+| Login via system `ssh` (agent, `~/.ssh/config`, ProxyJump) + config import | ✓ | – (sandbox) |
+| Login with key file / password (built-in client) | ✓ | ✓ |
 | Temperatures, fans, top processes | ✓ | – (blocked by the sandbox) |
 | Update check | GitHub Releases | App Store |
 
@@ -98,7 +102,20 @@ Tests/                   unit tests for MacMonitorCore
 
 ## Monitoring servers over SSH
 
-**1. Set up key-based SSH login.** MacMonitor uses `BatchMode=yes`, so it can't type passwords:
+**1. Choose how MacMonitor logs in** (the *Login* field in the server editor):
+
+- **System ssh** (direct edition, recommended): runs `/usr/bin/ssh` with your keys, ssh-agent and
+  `~/.ssh/config`. It uses `BatchMode=yes`, so key login must work without a prompt (see below).
+- **Private key file**: the built-in client (SwiftNIO SSH via [Citadel](https://github.com/orlandos-nl/Citadel)).
+  Pick an OpenSSH-format ed25519 or RSA key (`~/.ssh/id_ed25519`); passphrase-protected keys work.
+  The key and passphrase are copied into your login Keychain. PEM keys (`BEGIN RSA PRIVATE KEY`)
+  can be converted in place with `ssh-keygen -p -f <key>`. ECDSA keys aren't supported yet.
+- **Password**: the built-in client with a password stored in the Keychain.
+
+The built-in client trusts a server's host key on first connect and refuses a different key later
+(**Servers → <name> → Trust New Host Key** after a reinstall). It has no ProxyJump / agent support.
+
+For system ssh, set up key-based login first:
 ```bash
 ssh-keygen -t ed25519            # only if you don't have a key yet
 ssh-copy-id user@host

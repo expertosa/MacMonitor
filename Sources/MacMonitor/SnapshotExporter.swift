@@ -14,18 +14,6 @@ enum SnapshotExporter {
         return !(env["MM_SNAPSHOT"] ?? "").isEmpty || !(env["MM_WIDGET_SNAPSHOT"] ?? "").isEmpty
     }
 
-    #if APPSTORE
-    static func scheduleIfRequested(sampler: Sampler, prefs: Preferences) {
-        let env = ProcessInfo.processInfo.environment
-        if let dir = env["MM_WIDGET_SNAPSHOT"], !dir.isEmpty { renderWidgets(to: dir); NSApp.terminate(nil); return }
-        guard let path = env["MM_SNAPSHOT"], !path.isEmpty else { return }
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 3_000_000_000)   // let CPU / network samples settle
-            renderPanel(MonitorView(sampler: sampler, prefs: prefs, snapshotMode: true), to: path)
-            NSApp.terminate(nil)
-        }
-    }
-    #else
     static func scheduleIfRequested(sampler: Sampler, remotes: RemoteManager, prefs: Preferences) {
         let env = ProcessInfo.processInfo.environment
         if let dir = env["MM_WIDGET_SNAPSHOT"], !dir.isEmpty { renderWidgets(to: dir); NSApp.terminate(nil); return }
@@ -36,7 +24,6 @@ enum SnapshotExporter {
             NSApp.terminate(nil)
         }
     }
-    #endif
 
     private static var wallpaper: some View {
         LinearGradient(colors: [Color(hex: 0xF78F41), Color(hex: 0xFF604F), Color(hex: 0xA191C5)],

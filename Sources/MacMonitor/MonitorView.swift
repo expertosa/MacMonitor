@@ -42,9 +42,7 @@ extension Preferences {
 
 struct MonitorView: View {
     @ObservedObject var sampler: Sampler
-    #if !APPSTORE
     @ObservedObject var remotes: RemoteManager
-    #endif
     @ObservedObject var prefs: Preferences
     @ObservedObject var appearance = SystemAppearance.shared
     /// ImageRenderer can't draw NSVisualEffectView materials; use a flat translucent fill instead.
@@ -143,11 +141,9 @@ struct MonitorView: View {
             .padding(.bottom, style.s(16))
 
             // One compact section per SSH server (each observes only its own sampler).
-            #if !APPSTORE
             ForEach(remotes.servers) { server in
                 RemoteSection(server: server)
             }
-            #endif
         }
         .fixedSize(horizontal: false, vertical: true)
         .frame(width: style.s(Theme.panelWidth), alignment: .top)
@@ -215,7 +211,6 @@ struct DetailLine: View {
 
 // MARK: - Remote server section
 
-#if !APPSTORE
 struct RemoteSection: View {
     @ObservedObject var server: RemoteSampler
     @Environment(\.panelStyle) private var style
@@ -377,4 +372,3 @@ struct ServerHeader: View {
         }
     }
 }
-#endif

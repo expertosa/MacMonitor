@@ -1,6 +1,5 @@
-// Remote (SSH) server monitoring. Excluded from the Mac App Store edition (-D APPSTORE),
-// because App Sandbox forbids launching /usr/bin/ssh.
-#if !APPSTORE
+// Remote (SSH) server monitoring. The direct edition can use /usr/bin/ssh; both editions can
+// use the built-in client (the only option inside the App Store sandbox). See Transports.swift.
 import Foundation
 import Combine
 import MacMonitorCore
@@ -11,7 +10,7 @@ enum RemoteStatus: Equatable {
     case error(String)
 }
 
-/// Monitors one Linux server through a single long-lived `ssh` process running a sh loop.
+/// Monitors one server through a single long-lived SSH session running a sh loop.
 /// Nothing is installed on the server. Stdout is parsed off the main thread; results are
 /// published on the main thread at most once per remote block (every 2 s).
 @MainActor
@@ -27,10 +26,13 @@ final class RemoteSampler: ObservableObject, Identifiable {
     /// Called after a change that can alter the section's height (status, disk count, error text).
     var onLayoutChange: (() -> Void)?
 
-    private var process: Process?
+    private var transport: RemoteTransport?
     private var parser = RemoteStreamParser()
     private var metrics = RemoteMetrics()
-    private var stderrTail = StderrTail()
+    private var watchdog: Task<Void, Never>?
+    /// Online sessions that deliver nothing for this long are restarted (the built-in client has
+    /// no ServerAlive keepalives, and a silent remote loop means something is wrong anyway).
+    private static let stallTimeout: TimeInterval = 30
     private var generation = 0            // invalidates callbacks from older processes
     private var attempt = 0               // index into retryDelays
     private var stopped = false
@@ -84,7 +86,7 @@ final class RemoteSampler: ObservableObject, Identifiable {
     // MARK: Lifecycle
 
     func start() {
-        guard process == nil else { return }
+        guard transport == nil else { return }
         stopped = false
         launch()
     }
@@ -114,59 +116,49 @@ final class RemoteSampler: ObservableObject, Identifiable {
         metrics.resetBaselines()
         let parser = RemoteStreamParser()
         self.parser = parser
-        let tail = StderrTail()
-        self.stderrTail = tail
         setStatus(.connecting)
 
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        p.arguments = RemoteScript.sshArguments(for: config)
-        p.standardInput = FileHandle.nullDevice
-        let out = Pipe(), err = Pipe()
-        p.standardOutput = out
-        p.standardError = err
-
-        // readabilityHandler runs on a private background queue. At EOF it is called with
-        // empty data repeatedly unless cleared, so always clear it on empty reads.
-        out.fileHandleForReading.readabilityHandler = { [weak self] h in
-            let data = h.availableData
-            if data.isEmpty { h.readabilityHandler = nil; return }
-            let result = parser.feed(data)
-            guard result.hostname != nil || !result.samples.isEmpty else { return }
-            Task { @MainActor in self?.receive(result, generation: gen) }
-        }
-        err.fileHandleForReading.readabilityHandler = { h in
-            let data = h.availableData
-            if data.isEmpty { h.readabilityHandler = nil; return }
-            tail.append(data)
-        }
-        p.terminationHandler = { [weak self] proc in
-            let code = proc.terminationStatus
-            Task { @MainActor in
-                // Give the stderr handler a moment to drain the final message.
-                try? await Task.sleep(nanoseconds: 200_000_000)
-                self?.processExited(code: code, generation: gen)
-            }
-        }
-
-        do {
-            try p.run()
-            process = p
-        } catch {
-            out.fileHandleForReading.readabilityHandler = nil
-            err.fileHandleForReading.readabilityHandler = nil
-            setStatus(.error("Couldn't start ssh: \(error.localizedDescription)"))
-            scheduleRetry()
+        switch TransportFactory.make(for: config) {
+        case .failure(let e):
+            setStatus(.error(e.message))
+            return                              // configuration problem: retrying won't help
+        case .success(let t):
+            transport = t
+            t.start(onStdout: { [weak self] data in
+                let result = parser.feed(data)
+                guard result.hostname != nil || result.os != nil || !result.samples.isEmpty else { return }
+                Task { @MainActor in self?.receive(result, generation: gen) }
+            }, onExit: { [weak self] message in
+                Task { @MainActor in self?.transportExited(message, generation: gen) }
+            })
+            startWatchdog(generation: gen)
         }
     }
 
     private func teardown(terminate: Bool) {
-        guard let p = process else { return }
-        process = nil
-        p.terminationHandler = nil
-        (p.standardOutput as? Pipe)?.fileHandleForReading.readabilityHandler = nil
-        (p.standardError as? Pipe)?.fileHandleForReading.readabilityHandler = nil
-        if terminate && p.isRunning { p.terminate() }   // SIGTERM: ssh closes the session
+        watchdog?.cancel()
+        watchdog = nil
+        guard let t = transport else { return }
+        transport = nil
+        if terminate { t.stop() }
+    }
+
+    private func startWatchdog(generation gen: Int) {
+        watchdog?.cancel()
+        watchdog = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                guard let self, !Task.isCancelled, gen == self.generation, !self.stopped else { return }
+                if self.status == .online, let last = self.lastData,
+                   Date().timeIntervalSince(last) > Self.stallTimeout {
+                    self.generation &+= 1
+                    self.teardown(terminate: true)
+                    self.setStatus(.error("No data for \(Int(Self.stallTimeout)) s"))
+                    self.scheduleRetry()
+                    return
+                }
+            }
+        }
     }
 
     // MARK: Callbacks (main thread)
@@ -188,15 +180,21 @@ final class RemoteSampler: ObservableObject, Identifiable {
         if layoutKey != oldKey { onLayoutChange?() }
     }
 
-    private func processExited(code: Int32, generation gen: Int) {
+    private func transportExited(_ message: String, generation gen: Int) {
         guard gen == generation else { return }
         teardown(terminate: false)
         guard !stopped else { return }
         if onlineThisRun { attempt = 0 }
-        var msg = stderrTail.lastMessage()
-        if msg.isEmpty { msg = code == 255 ? "Connection failed" : "Connection closed (exit \(code))" }
-        setStatus(.error(msg))
+        setStatus(.error(message.isEmpty ? "Connection closed" : message))
+        // A changed host key needs the user's decision; don't hammer the server.
+        if message.hasPrefix("Host key changed") { return }
         scheduleRetry()
+    }
+
+    /// True when the last error was a host key mismatch (offers "Trust New Host Key").
+    var hostKeyMismatch: Bool {
+        if case .error(let m) = status { return m.hasPrefix("Host key changed") }
+        return false
     }
 
     private func scheduleRetry() {
@@ -220,31 +218,6 @@ final class RemoteSampler: ObservableObject, Identifiable {
         let oldKey = layoutKey
         status = new
         if layoutKey != oldKey { onLayoutChange?() }
-    }
-}
-
-/// Keeps the last ~2 KB of ssh's stderr (written from a background queue).
-final class StderrTail: @unchecked Sendable {
-    private let lock = NSLock()
-    private var data = Data()
-
-    func append(_ d: Data) {
-        lock.lock(); defer { lock.unlock() }
-        data.append(d)
-        if data.count > 2048 { data = Data(data.suffix(2048)) }
-    }
-
-    /// Last meaningful stderr line, shortened for display.
-    func lastMessage() -> String {
-        lock.lock(); defer { lock.unlock() }
-        let text = String(decoding: data, as: UTF8.self)
-        let lines = text.split(whereSeparator: { $0 == "\n" || $0 == "\r" })
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("Warning: Permanently added") }
-        guard var line = lines.last else { return "" }
-        if line.hasPrefix("ssh: ") { line.removeFirst(5) }
-        if line.count > 90 { line = String(line.prefix(89)) + "…" }
-        return line
     }
 }
 
@@ -285,6 +258,10 @@ final class RemoteManager: ObservableObject {
     func remove(id: UUID) {
         guard let i = servers.firstIndex(where: { $0.id == id }) else { return }
         servers[i].stop()
+        if !demo {
+            ServerSecrets.deleteAll(id)
+            KnownHostKeys.set(nil, id)
+        }
         servers.remove(at: i)
         save()
         notifyLayout()
@@ -294,11 +271,18 @@ final class RemoteManager: ObservableObject {
 
     func server(id: UUID) -> RemoteSampler? { servers.first { $0.id == id } }
 
-    /// Applies an edited config: reconnects only when connection settings changed.
-    func update(_ config: ServerConfig) {
+    /// Forget the stored host key (server reinstalled) and reconnect, accepting the new key.
+    func trustNewHostKey(id: UUID) {
+        KnownHostKeys.set(nil, id)
+        reconnect(id: id)
+    }
+
+    /// Applies an edited config: reconnects only when connection settings (or, with
+    /// `secretsChanged`, the Keychain credentials) changed.
+    func update(_ config: ServerConfig, secretsChanged: Bool = false) {
         guard let i = servers.firstIndex(where: { $0.id == config.id }) else { return }
         let old = servers[i]
-        if old.config.connectionDiffers(from: config) {
+        if secretsChanged || old.config.connectionDiffers(from: config) {
             old.stop()
             let s = makeSampler(config)
             servers[i] = s
@@ -383,4 +367,3 @@ final class RemoteManager: ObservableObject {
         return RemoteSampler(demo: cfg, snapshot: s)
     }
 }
-#endif
