@@ -1,0 +1,35 @@
+name: Screenshots
+
+# Manually run (Actions → Screenshots → Run workflow) to re-render the README images in docs/
+# from the current code and commit them to the selected branch.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: swift build -c release
+      - name: Render
+        run: |
+          mkdir -p docs
+          MM_SNAPSHOT="$PWD/docs/panel.png" .build/release/MacMonitor
+          MM_SNAPSHOT="$PWD/docs/panel-dark.png" MM_SNAPSHOT_THEME=dark .build/release/MacMonitor
+          MM_WIDGET_SNAPSHOT="$PWD/docs" .build/release/MacMonitor
+          ls -la docs
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/*.png
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "docs: re-render screenshots"
+          git push
