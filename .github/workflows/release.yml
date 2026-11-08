@@ -1,0 +1,245 @@
+name: Release
+
+# Builds the direct-download edition (MacMonitorDirect) with the embedded widget,
+# Developer ID signs it, notarizes it, and publishes a DMG + ZIP.
+#
+# This does not ad-hoc sign, and it does not tell anyone to clear the quarantine
+# attribute. It also does not submit the app for App Store review.
+#
+# Trigger: Actions → Release → Run workflow, or push a tag v<VERSION> (the tag
+# must match the VERSION file, for example v1.1.0).
+#
+# Required repository secrets. Values are never printed.
+#   MACOS_CERT_P12         base64 of a Developer ID Application certificate (.p12)
+#   MACOS_CERT_PASSWORD    password of that .p12
+#   NOTARY_KEY_P8          base64 of an App Store Connect API key, or ASC_KEY_P8
+#   NOTARY_KEY_ID          that key's id, or ASC_KEY_ID
+#   NOTARY_ISSUER_ID       that key's issuer, or ASC_ISSUER_ID
+#
+# Marketing version is the semver in VERSION. CFBundleVersion is the short
+# sequential integer CURRENT_PROJECT_VERSION in Xcode/project.yml. Never a timestamp.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  signing-secrets:
+    name: Signing secrets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require Developer ID and notarization secrets
+        env:
+          HAS_P12: ${{ secrets.MACOS_CERT_P12 != '' }}
+          HAS_P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD != '' }}
+          HAS_NOTARY_P8: ${{ secrets.NOTARY_KEY_P8 != '' }}
+          HAS_NOTARY_ID: ${{ secrets.NOTARY_KEY_ID != '' }}
+          HAS_NOTARY_ISS: ${{ secrets.NOTARY_ISSUER_ID != '' }}
+          HAS_ASC_P8: ${{ secrets.ASC_KEY_P8 != '' }}
+          HAS_ASC_ID: ${{ secrets.ASC_KEY_ID != '' }}
+          HAS_ASC_ISS: ${{ secrets.ASC_ISSUER_ID != '' }}
+        run: |
+          missing=()
+          [[ "$HAS_P12" == "true" ]] || missing+=(MACOS_CERT_P12)
+          [[ "$HAS_P12_PASSWORD" == "true" ]] || missing+=(MACOS_CERT_PASSWORD)
+          if [[ "$HAS_NOTARY_P8" != "true" && "$HAS_ASC_P8" != "true" ]]; then
+            missing+=("NOTARY_KEY_P8 or ASC_KEY_P8")
+          fi
+          if [[ "$HAS_NOTARY_ID" != "true" && "$HAS_ASC_ID" != "true" ]]; then
+            missing+=("NOTARY_KEY_ID or ASC_KEY_ID")
+          fi
+          if [[ "$HAS_NOTARY_ISS" != "true" && "$HAS_ASC_ISS" != "true" ]]; then
+            missing+=("NOTARY_ISSUER_ID or ASC_ISSUER_ID")
+          fi
+          if (( ${#missing[@]} )); then
+            echo "::error::Cannot publish a normally signed build. Missing repository secrets: ${missing[*]}. Ad-hoc signing and quarantine removal are not used."
+            exit 1
+          fi
+          echo "Developer ID and notarization secrets are present. Values were not printed."
+
+  release:
+    name: Sign, notarize, package
+    needs: signing-secrets
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          case "$VERSION" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::Marketing version must be semver MAJOR.MINOR.PATCH (VERSION file is '$VERSION')."; exit 1 ;;
+          esac
+          IFS=. read -r major minor patch extra <<< "$VERSION"
+          if [[ -n "${extra:-}" || ! "$major" =~ ^([0-9]|[1-9][0-9]+)$ || ! "$minor" =~ ^([0-9]|[1-9][0-9]+)$ || ! "$patch" =~ ^([0-9]|[1-9][0-9]+)$ ]]; then
+            echo "::error::Marketing version must be semver MAJOR.MINOR.PATCH with no leading zeros (VERSION file is '$VERSION')."
+            exit 1
+          fi
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$VERSION" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match VERSION file ($VERSION)."
+            exit 1
+          fi
+          BUILD="$(awk -F'"' '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ { print $2; exit }' Xcode/project.yml)"
+          case "$BUILD" in
+            ''|*[!0-9]*|0*) bad=1 ;;
+            *) bad= ;;
+          esac
+          if [[ -n "$bad" || ${#BUILD} -gt 4 ]]; then
+            echo "::error::CFBundleVersion must be a short sequential integer (1–9999) from Xcode/project.yml CURRENT_PROJECT_VERSION (got '${BUILD:-empty}'). Timestamps and dates are not allowed."
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "BUILD=$BUILD" >> "$GITHUB_ENV"
+          echo "Version $VERSION build $BUILD" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Tests
+        run: swift test
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Import Developer ID certificate
+        env:
+          P12: ${{ secrets.MACOS_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KC="$RUNNER_TEMP/build.keychain"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p ci "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p ci "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KC"
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KC"
+          security list-keychains -d user -s "$KC" login.keychain
+      - name: API key for profiles and notarization
+        env:
+          NOTARY_P8: ${{ secrets.NOTARY_KEY_P8 || secrets.ASC_KEY_P8 }}
+          NOTARY_ID: ${{ secrets.NOTARY_KEY_ID || secrets.ASC_KEY_ID }}
+          NOTARY_ISS: ${{ secrets.NOTARY_ISSUER_ID || secrets.ASC_ISSUER_ID }}
+        run: |
+          echo "$NOTARY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          echo "NOTARY_ID=$NOTARY_ID" >> "$GITHUB_ENV"
+          echo "NOTARY_ISS=$NOTARY_ISS" >> "$GITHUB_ENV"
+          echo "AUTH=-allowProvisioningUpdates -authenticationKeyPath $RUNNER_TEMP/AuthKey.p8 -authenticationKeyID $NOTARY_ID -authenticationKeyIssuerID $NOTARY_ISS" >> "$GITHUB_ENV"
+      - name: Build universal direct edition
+        run: |
+          cd Xcode && xcodegen generate
+          xcodebuild -project MacMonitor.xcodeproj -scheme MacMonitorDirect -configuration Release \
+            -destination 'generic/platform=macOS' -derivedDataPath build/dd \
+            ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_STYLE=Automatic "CODE_SIGN_IDENTITY=Developer ID Application" \
+            DEVELOPMENT_TEAM=NWPTRYJ9FL "OTHER_CODE_SIGN_FLAGS=--timestamp" \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" \
+            $AUTH build > build.log 2>&1 \
+            || { grep -E "error:|requires a provisioning|No profiles|No Accounts|certificate" build.log | head -80; tail -n 40 build.log; exit 1; }
+          mkdir -p build/out
+          cp -R build/dd/Build/Products/Release/MacMonitor.app build/out/
+      - name: Notarize and staple
+        run: |
+          APP=Xcode/build/out/MacMonitor.app
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --key "$RUNNER_TEMP/AuthKey.p8" \
+            --key-id "$NOTARY_ID" --issuer "$NOTARY_ISS" --wait
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+      - name: Prove signature, architectures, and embedded widgets
+        run: |
+          set +o pipefail
+          APP=Xcode/build/out/MacMonitor.app
+          APPEX="$APP/Contents/PlugIns/MacMonitorWidget.appex"
+          BIN="$APP/Contents/MacOS/MacMonitor"
+          WBIN="$APPEX/Contents/MacOS/MacMonitorWidget"
+          test -d "$APPEX"
+          test -x "$WBIN"
+          codesign -dv --verbose=4 "$APP" > "$RUNNER_TEMP/app-sign.txt" 2>&1 || true
+          codesign -dv --verbose=4 "$APPEX" > "$RUNNER_TEMP/widget-sign.txt" 2>&1 || true
+          strings -a "$WBIN" > "$RUNNER_TEMP/widget-strings.txt"
+          APP_ARCH="$(lipo -info "$BIN")"
+          WIDGET_ARCH="$(lipo -info "$WBIN")"
+          APP_VER="$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")"
+          APP_BUILD="$(plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")"
+          WIDGET_VER="$(plutil -extract CFBundleShortVersionString raw -o - "$APPEX/Contents/Info.plist")"
+          WIDGET_BUILD="$(plutil -extract CFBundleVersion raw -o - "$APPEX/Contents/Info.plist")"
+          EXT="$(plutil -extract NSExtension.NSExtensionPointIdentifier raw -o - "$APPEX/Contents/Info.plist")"
+          EV=Xcode/build/out/evidence.txt
+          {
+            echo "marketing=$VERSION"
+            echo "build=$BUILD"
+            echo "bundle=$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")"
+            echo "app_version=$APP_VER"
+            echo "app_build=$APP_BUILD"
+            echo "widget_version=$WIDGET_VER"
+            echo "widget_build=$WIDGET_BUILD"
+            echo "widget_extension=$EXT"
+            echo "app_arch=$APP_ARCH"
+            echo "widget_arch=$WIDGET_ARCH"
+            echo "signature:"
+            grep -E "^(Authority|TeamIdentifier|Identifier|Signature)=" "$RUNNER_TEMP/app-sign.txt" || true
+            echo "widget_signature:"
+            grep -E "^(Authority|TeamIdentifier|Identifier)=" "$RUNNER_TEMP/widget-sign.txt" || true
+            echo "stapler:"
+            xcrun stapler validate "$APP"
+            echo "widget_strings:"
+            grep -F -e "This Mac" -e "Servers" -e "MacStatsWidget" -e "ServersWidget" "$RUNNER_TEMP/widget-strings.txt" | sort -u
+          } | tee "$EV" | tee -a "$GITHUB_STEP_SUMMARY"
+          [[ "$APP_VER" == "$VERSION" && "$APP_BUILD" == "$BUILD" ]]
+          [[ "$WIDGET_VER" == "$VERSION" && "$WIDGET_BUILD" == "$BUILD" ]]
+          [[ "$EXT" == "com.apple.widgetkit-extension" ]]
+          [[ "$APP_ARCH" == *arm64* && "$APP_ARCH" == *x86_64* ]]
+          [[ "$WIDGET_ARCH" == *arm64* && "$WIDGET_ARCH" == *x86_64* ]]
+          grep -q "Authority=Developer ID Application:" "$RUNNER_TEMP/app-sign.txt"
+          grep -q "Authority=Developer ID Application:" "$RUNNER_TEMP/widget-sign.txt"
+          grep -q "TeamIdentifier=NWPTRYJ9FL" "$RUNNER_TEMP/app-sign.txt"
+          grep -q "TeamIdentifier=NWPTRYJ9FL" "$RUNNER_TEMP/widget-sign.txt"
+          grep -q -F "This Mac" "$RUNNER_TEMP/widget-strings.txt"
+          grep -q -F "Servers" "$RUNNER_TEMP/widget-strings.txt"
+          grep -q -F "MacStatsWidget" "$RUNNER_TEMP/widget-strings.txt"
+          grep -q -F "ServersWidget" "$RUNNER_TEMP/widget-strings.txt"
+          spctl --assess --type execute --verbose=4 "$APP"
+      - name: Package
+        run: |
+          cd Xcode/build/out
+          ditto -c -k --keepParent MacMonitor.app "MacMonitor-$VERSION-$BUILD.zip"
+          STAGE="$(mktemp -d)"
+          cp -R MacMonitor.app "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "MacMonitor $VERSION" -srcfolder "$STAGE" -ov -format UDZO "MacMonitor-$VERSION-$BUILD.dmg"
+          shasum -a 256 MacMonitor-*.dmg MacMonitor-*.zip | tee SHA256SUMS.txt
+          {
+            echo "## MacMonitor $VERSION ($BUILD)"
+            echo
+            echo "Direct edition for MacBook and other Macs (Apple Silicon and Intel), with the widget extension embedded."
+            echo "This Mac and Servers are included at small, medium, and large."
+            echo "Developer ID signed and notarized. Replacing \`/Applications/MacMonitor.app\` keeps existing settings for \`com.tweetso.macmonitor\`."
+            echo
+            awk "/^## \\[$VERSION\\]/{f=1;next}/^## \\[/{f=0}f" ../../../CHANGELOG.md
+            echo
+            echo '```'
+            cat SHA256SUMS.txt
+            echo '```'
+            echo
+            echo "<details><summary>Signature and widget evidence</summary>"
+            echo
+            echo '```'
+            cat evidence.txt
+            echo '```'
+            echo
+            echo "</details>"
+          } > notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: MacMonitor ${{ env.VERSION }} (${{ env.BUILD }})
+          body_path: Xcode/build/out/notes.md
+          files: |
+            Xcode/build/out/MacMonitor-*.dmg
+            Xcode/build/out/MacMonitor-*.zip
+            Xcode/build/out/SHA256SUMS.txt
+            Xcode/build/out/evidence.txt
+          make_latest: true

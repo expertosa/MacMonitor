@@ -1,0 +1,123 @@
+# XcodeGen spec for the app bundles that include the WidgetKit extension.
+#   brew install xcodegen && cd Xcode && xcodegen generate   # -> MacMonitor.xcodeproj
+#
+# Targets
+#   MacMonitorDirect    full edition (SSH servers, sensors, update checks). Not sandboxed,
+#                       Hardened Runtime, distributed as a notarized DMG / Homebrew cask.
+#   MacMonitorAppStore  Mac App Store edition, compiled with -D APPSTORE. Sandboxed: servers use the
+#                       built-in SSH client (MacMonitorSSH) instead of /usr/bin/ssh; no SMC / process list.
+#   MacMonitorWidget    WidgetKit extension embedded in both apps (sandboxed). Reads server
+#                       state that the app writes to the shared App Group container.
+# Shared code comes from the local Swift package at the repository root
+# (MacMonitorCore + MacMonitorUI + MacMonitorSSH); the app sources are Sources/MacMonitor.
+name: MacMonitor
+options:
+  bundleIdPrefix: com.tweetso
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+packages:
+  MacMonitorKit:
+    path: ..
+settings:
+  base:
+    DEVELOPMENT_TEAM: NWPTRYJ9FL
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+    MARKETING_VERSION: "1.1.0"
+    CURRENT_PROJECT_VERSION: "2"
+    ENABLE_HARDENED_RUNTIME: YES
+    DEAD_CODE_STRIPPING: YES
+    CODE_SIGN_IDENTITY: "Apple Development"
+targetTemplates:
+  MacMonitorApp:
+    type: application
+    platform: macOS
+    sources:
+      - path: ../Sources/MacMonitor
+        includes:
+          - "*.swift"
+      - path: Assets.xcassets
+      - path: PrivacyInfo.xcprivacy
+        buildPhase: resources
+    dependencies:
+      - package: MacMonitorKit
+        product: MacMonitorCore
+      - package: MacMonitorKit
+        product: MacMonitorUI
+      - package: MacMonitorKit
+        product: MacMonitorSSH
+      - target: MacMonitorWidget
+        embed: true
+      - sdk: WidgetKit.framework
+    settings:
+      base:
+        PRODUCT_NAME: MacMonitor
+        PRODUCT_MODULE_NAME: MacMonitorApp
+        PRODUCT_BUNDLE_IDENTIFIER: com.tweetso.macmonitor
+        INFOPLIST_FILE: Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        COMBINE_HIDPI_IMAGES: YES
+targets:
+  MacMonitorDirect:
+    templates: [MacMonitorApp]
+    settings:
+      base:
+        CODE_SIGN_ENTITLEMENTS: Direct.entitlements
+        ENABLE_APP_SANDBOX: NO
+  MacMonitorAppStore:
+    templates: [MacMonitorApp]
+    settings:
+      base:
+        CODE_SIGN_ENTITLEMENTS: AppStore.entitlements
+        ENABLE_APP_SANDBOX: YES
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG APPSTORE"
+        Release:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "APPSTORE"
+  MacMonitorWidget:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: ../Widget
+        includes:
+          - "*.swift"
+      - path: ../Widget/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    dependencies:
+      - package: MacMonitorKit
+        product: MacMonitorCore
+      - package: MacMonitorKit
+        product: MacMonitorUI
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    settings:
+      base:
+        PRODUCT_NAME: MacMonitorWidget
+        PRODUCT_BUNDLE_IDENTIFIER: com.tweetso.macmonitor.widget
+        INFOPLIST_FILE: ../Widget/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: ../Widget/MacMonitorWidget.entitlements
+        ENABLE_APP_SANDBOX: YES
+        SKIP_INSTALL: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"
+schemes:
+  MacMonitorDirect:
+    build:
+      targets:
+        MacMonitorDirect: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  MacMonitorAppStore:
+    build:
+      targets:
+        MacMonitorAppStore: all
+    run:
+      config: Debug
+    archive:
+      config: Release

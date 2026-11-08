@@ -1,0 +1,39 @@
+name: Screenshots
+
+# Re-renders the README images in docs/ from the current code and commits them to the branch.
+# Run it from Actions → Screenshots → Run workflow, or push a commit whose message contains
+# "[screenshots]".
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[screenshots]')
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: swift build -c release
+      - name: Render
+        run: |
+          mkdir -p docs
+          MM_SNAPSHOT="$PWD/docs/panel.png" .build/release/MacMonitor
+          MM_SNAPSHOT="$PWD/docs/panel-dark.png" MM_SNAPSHOT_THEME=dark .build/release/MacMonitor
+          MM_WIDGET_SNAPSHOT="$PWD/docs" .build/release/MacMonitor
+          ls -la docs
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/*.png
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "docs: re-render screenshots"
+          git push

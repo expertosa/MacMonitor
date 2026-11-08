@@ -1,5 +1,6 @@
 import AppKit
-import ServiceManagement
+import Combine
+import MacMonitorCore
 
 @main
 enum MacMonitorMain {
@@ -22,55 +23,106 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         static let locked = "panelLocked"
     }
 
+    private let prefs = Preferences.shared
     private var sampler: Sampler!
-    #if !APPSTORE
     private var remotes: RemoteManager!
+    #if !APPSTORE
+    private var updates: UpdateChecker!
     #endif
     private var panel: DesktopPanel!
     private var statusItem: NSStatusItem!
+    private var alerts: AlertManager!
+    private let widgetBridge = WidgetBridge()
+    private var settings: SettingsWindowController?
+    private var subs: Set<AnyCancellable> = []
 
     private var showItem: NSMenuItem!
     private var lockItem: NSMenuItem!
     private var loginItem: NSMenuItem!
-    #if !APPSTORE
     private var serversItem: NSMenuItem!
+    #if !APPSTORE
+    private var updateItem: NSMenuItem!
     #endif
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: [Keys.visible: true, Keys.locked: true])
+        let snapshotMode = SnapshotExporter.isActive
 
-        sampler = Sampler()
-        #if APPSTORE
-        panel = DesktopPanel(sampler: sampler)
-        #else
+        sampler = Sampler(prefs: prefs)
+        alerts = AlertManager(prefs: prefs)
         // Snapshot debug mode shows a fake 'linux-server' instead of connecting over SSH.
-        let snapshotMode = !(ProcessInfo.processInfo.environment["MM_SNAPSHOT"] ?? "").isEmpty
         remotes = RemoteManager(demo: snapshotMode)
-        panel = DesktopPanel(sampler: sampler, remotes: remotes)
+        #if !APPSTORE
+        updates = UpdateChecker(prefs: prefs)
         #endif
+        panel = DesktopPanel(sampler: sampler, remotes: remotes, prefs: prefs)
         panel.locked = UserDefaults.standard.bool(forKey: Keys.locked)
-        if UserDefaults.standard.bool(forKey: Keys.visible) { panel.orderFront(nil) }
+        if UserDefaults.standard.bool(forKey: Keys.visible) && !snapshotMode { panel.orderFront(nil) }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
             button.title = "CPU --  RAM --"
+            button.imagePosition = .imageLeft
         }
         statusItem.menu = buildMenu()
 
-        sampler.onTick = { [weak self] s in self?.updateStatusTitle(s) }
-        updateStatusTitle(sampler.snapshot)
+        sampler.onTick = { [weak self] s in self?.tick(s) }
+        tick(sampler.snapshot)
+        // Redraw the title right away when menu bar settings change.
+        prefs.objectWillChange
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.updateStatusItem(self?.sampler.snapshot) } }
+            .store(in: &subs)
 
-        #if APPSTORE
-        SnapshotExporter.scheduleIfRequested(sampler: sampler)   // debug: MM_SNAPSHOT=/tmp/panel.png
-        #else
-        SnapshotExporter.scheduleIfRequested(sampler: sampler, remotes: remotes)   // debug: MM_SNAPSHOT=/tmp/panel.png
-        #endif
+        SnapshotExporter.scheduleIfRequested(sampler: sampler, remotes: remotes, prefs: prefs)
     }
 
-    private func updateStatusTitle(_ s: Snapshot) {
-        let title = String(format: "CPU %2.0f%%  RAM %2.0f%%", s.cpu * 100, s.memFraction * 100)
-        if let button = statusItem?.button, button.title != title { button.title = title }
+    // MARK: Tick
+
+    private func tick(_ s: Snapshot) {
+        updateStatusItem(s)
+
+        var input = AlertInput()
+        input.cpu = s.cpu
+        input.memoryPressureCritical = s.memory.pressure == .critical
+        input.volumes = s.volumes.map { .init(id: $0.id, name: $0.name, usedFraction: $0.usedFraction) }
+        input.batteryPercent = s.battery?.percent
+        input.batteryCharging = s.battery.map { $0.charging || $0.onAC } ?? false
+        input.servers = remotes.servers.map { srv in
+            var offline = false
+            if case .error = srv.status { offline = true }
+            let snap = srv.snapshot
+            return AlertInput.Server(id: srv.id, name: srv.config.name, offline: offline,
+                                     online: srv.status == .online && snap.hasData, cpu: snap.cpu,
+                                     disks: snap.disks, services: snap.services,
+                                     rebootRequired: snap.rebootRequired == true)
+        }
+        widgetBridge.update(servers: remotes.servers.map(\.widgetServer))
+        alerts.evaluate(input)
+    }
+
+    private func updateStatusItem(_ s: Snapshot?) {
+        guard let s, let button = statusItem?.button else { return }
+        let title = MenuBarRenderer.title(for: s, items: prefs.menuBarItems)
+        if button.title != title { button.title = title }
+        if prefs.menuBarStyle == .graph {
+            button.image = MenuBarRenderer.sparkline(s.cpuHistory)
+        } else if button.image != nil {
+            button.image = nil
+        }
+    }
+
+    // MARK: URL scheme (macmonitor://settings, used by the widget)
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme == "macmonitor" {
+            switch url.host {
+            case "servers": showSettings(tab: .servers)
+            case "panel":
+                if !panel.isVisible { toggleVisible() }
+            default: showSettings(tab: nil)
+            }
+        }
     }
 
     // MARK: Menu
@@ -79,46 +131,87 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         menu.autoenablesItems = false
-        showItem = NSMenuItem(title: "Hide Desktop Panel",
-                              action: #selector(AppDelegate.toggleVisible), keyEquivalent: "")
-        lockItem = NSMenuItem(title: "Unlock Position",
-                              action: #selector(AppDelegate.toggleLock), keyEquivalent: "")
-        loginItem = NSMenuItem(title: "Launch at Login",
-                               action: #selector(AppDelegate.toggleLogin), keyEquivalent: "")
-        for item in [showItem!, lockItem!, loginItem!] {
-            item.target = self
-            menu.addItem(item)
-        }
-        #if !APPSTORE
+        showItem = item("Hide Desktop Panel", #selector(toggleVisible))
+        lockItem = item("Unlock Position", #selector(toggleLock))
+        loginItem = item("Launch at Login", #selector(toggleLogin))
+        [showItem, lockItem, loginItem].forEach { menu.addItem($0!) }
+        menu.addItem(item("Settings…", #selector(openSettings), key: ","))
         menu.addItem(.separator())
-        let add = NSMenuItem(title: "Add Server…", action: #selector(AppDelegate.addServer), keyEquivalent: "")
-        add.target = self
-        menu.addItem(add)
+        menu.addItem(item("Add Server…", #selector(addServer)))
+        #if !APPSTORE
+        menu.addItem(item("Import from ~/.ssh/config…", #selector(importServers)))
+        #endif
         serversItem = NSMenuItem(title: "Servers", action: nil, keyEquivalent: "")
         serversItem.submenu = NSMenu(title: "Servers")
         menu.addItem(serversItem)
+        menu.addItem(.separator())
+        menu.addItem(item("Open Activity Monitor", #selector(openActivityMonitor)))
+        menu.addItem(item("Open Disk Utility", #selector(openDiskUtility)))
+        #if !APPSTORE
+        menu.addItem(.separator())
+        updateItem = item("Check for Updates…", #selector(checkForUpdates))
+        menu.addItem(updateItem)
         #endif
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit MacMonitor", action: #selector(AppDelegate.quit), keyEquivalent: "q")
-        quit.target = self
-        menu.addItem(quit)
+        menu.addItem(item("Quit MacMonitor", #selector(quit), key: "q"))
         return menu
+    }
+
+    private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
+        let i = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        i.target = self
+        return i
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         showItem.title = panel.isVisible ? "Hide Desktop Panel" : "Show Desktop Panel"
         lockItem.title = panel.locked ? "Unlock Position" : "Lock Position"
         lockItem.isEnabled = panel.isVisible
-        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        #if !APPSTORE
+        loginItem.state = LoginItem.isEnabled ? .on : .off
         rebuildServersMenu()
+        #if !APPSTORE
+        if let a = updates.available {
+            updateItem.title = "Update Available: \(a.version)…"
+        } else {
+            updateItem.title = "Check for Updates…"
+        }
         #endif
     }
 
-    #if !APPSTORE
-    func applicationWillTerminate(_ notification: Notification) {
-        remotes?.stopAll()          // SIGTERM every ssh child so no sessions are left behind
+    @objc private func openSettings() { showSettings(tab: nil) }
+
+    private func showSettings(tab: SettingsTab?) {
+        if settings == nil {
+            #if APPSTORE
+            settings = SettingsWindowController(prefs: prefs, alerts: alerts, remotes: remotes)
+            #else
+            settings = SettingsWindowController(prefs: prefs, alerts: alerts, remotes: remotes, updates: updates)
+            #endif
+        }
+        settings?.show(tab: tab)
     }
+
+    @objc private func openActivityMonitor() { openApp(bundleID: "com.apple.ActivityMonitor") }
+    @objc private func openDiskUtility() { openApp(bundleID: "com.apple.DiskUtility") }
+
+    private func openApp(bundleID: String) {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
+        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        remotes?.stopAll()          // end every SSH session so none are left behind
+    }
+
+    #if !APPSTORE
+    @objc private func checkForUpdates() {
+        if let a = updates.available {
+            NSWorkspace.shared.open(a.url)
+        } else {
+            updates.check(userInitiated: true)
+        }
+    }
+    #endif
 
     // MARK: Servers
 
@@ -130,26 +223,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         serversItem.isEnabled = !servers.isEmpty
         serversItem.title = servers.isEmpty ? "Servers" : "Servers (\(servers.count))"
         for server in servers {
-            let item = NSMenuItem(title: server.config.name, action: nil, keyEquivalent: "")
+            let entry = NSMenuItem(title: server.config.name, action: nil, keyEquivalent: "")
             let detail = NSMenu()
             detail.autoenablesItems = false
             let info = NSMenuItem(title: server.config.displayAddress + " · " + Self.describe(server.status),
                                   action: nil, keyEquivalent: "")
             info.isEnabled = false
             detail.addItem(info)
+            for w in WidgetServer.warnings(for: server.snapshot) {
+                let wi = NSMenuItem(title: "⚠︎ " + w, action: nil, keyEquivalent: "")
+                wi.isEnabled = false
+                detail.addItem(wi)
+            }
             detail.addItem(.separator())
-            let reconnect = NSMenuItem(title: "Reconnect", action: #selector(AppDelegate.reconnectServer(_:)),
-                                       keyEquivalent: "")
-            reconnect.target = self
-            reconnect.representedObject = server.id
-            detail.addItem(reconnect)
-            let remove = NSMenuItem(title: "Remove", action: #selector(AppDelegate.removeServer(_:)),
-                                    keyEquivalent: "")
-            remove.target = self
-            remove.representedObject = server.id
-            detail.addItem(remove)
-            item.submenu = detail
-            sub.addItem(item)
+            func add(_ title: String, _ action: Selector) {
+                let i = item(title, action)
+                i.representedObject = server.id
+                detail.addItem(i)
+            }
+            add("Open SSH in Terminal", #selector(openSSH(_:)))
+            add("Copy SSH Command", #selector(copySSH(_:)))
+            detail.addItem(.separator())
+            add("Edit…", #selector(editServer(_:)))
+            add(server.config.collapsed ? "Expand in Panel" : "Compact in Panel", #selector(toggleCollapsed(_:)))
+            if server.hostKeyMismatch { add("Trust New Host Key", #selector(trustHostKey(_:))) }
+            add("Reconnect", #selector(reconnectServer(_:)))
+            add("Remove", #selector(removeServer(_:)))
+            entry.submenu = detail
+            sub.addItem(entry)
+        }
+        if !servers.isEmpty {
+            sub.addItem(.separator())
+            sub.addItem(item("Manage Servers…", #selector(manageServers)))
         }
     }
 
@@ -161,85 +266,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    @objc private func removeServer(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID else { return }
-        remotes.remove(id: id)
+    private func server(_ sender: NSMenuItem) -> RemoteSampler? {
+        (sender.representedObject as? UUID).flatMap { remotes.server(id: $0) }
     }
 
-    @objc private func reconnectServer(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID else { return }
-        remotes.reconnect(id: id)
+    @objc private func removeServer(_ sender: NSMenuItem) {
+        guard let s = server(sender) else { return }
+        remotes.remove(id: s.id)
+    }
+
+    @objc private func reconnectServer(_ sender: NSMenuItem) { server(sender)?.reconnect() }
+
+    @objc private func editServer(_ sender: NSMenuItem) {
+        guard let s = server(sender), let r = ServerEditor.run(editing: s.config) else { return }
+        remotes.update(r.config, secretsChanged: r.secretsChanged)
+    }
+
+    @objc private func trustHostKey(_ sender: NSMenuItem) {
+        guard let s = server(sender) else { return }
+        let alert = NSAlert()
+        alert.messageText = "Trust the new host key of \(s.config.name)?"
+        alert.informativeText = "Only do this if you know the server was reinstalled or its SSH keys were "
+            + "regenerated. Otherwise someone may be intercepting the connection."
+        alert.addButton(withTitle: "Trust New Key")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        remotes.trustNewHostKey(id: s.id)
+    }
+
+    @objc private func toggleCollapsed(_ sender: NSMenuItem) {
+        guard var cfg = server(sender)?.config else { return }
+        cfg.collapsed.toggle()
+        remotes.update(cfg)
+    }
+
+    @objc private func openSSH(_ sender: NSMenuItem) {
+        guard let url = server(sender)?.config.sshURL else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func copySSH(_ sender: NSMenuItem) {
+        guard let cmd = server(sender)?.config.sshCommand else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(cmd, forType: .string)
     }
 
     @objc private func addServer() {
-        func field(_ placeholder: String, _ value: String = "") -> NSTextField {
-            let f = NSTextField(string: value)
-            f.placeholderString = placeholder
-            f.translatesAutoresizingMaskIntoConstraints = false
-            f.widthAnchor.constraint(equalToConstant: 220).isActive = true
-            return f
-        }
-        let nameField = field("e.g. web-01 (optional)")
-        let hostField = field("hostname or IP")
-        let userField = field("user", NSUserName())
-        let portField = field("22", "22")
-        let keyField = field("~/.ssh/id_ed25519 (optional)")
-
-        let grid = NSGridView(views: [
-            [NSTextField(labelWithString: "Name:"), nameField],
-            [NSTextField(labelWithString: "Host:"), hostField],
-            [NSTextField(labelWithString: "User:"), userField],
-            [NSTextField(labelWithString: "Port:"), portField],
-            [NSTextField(labelWithString: "Identity file:"), keyField],
-        ])
-        grid.rowSpacing = 8
-        grid.columnSpacing = 8
-        grid.column(at: 0).xPlacement = .trailing
-        grid.rowAlignment = .firstBaseline
-        grid.frame = NSRect(origin: .zero, size: grid.fittingSize)
-
-        let alert = NSAlert()
-        alert.messageText = "Add Server"
-        alert.informativeText = "MacMonitor connects with /usr/bin/ssh using key authentication (no passwords). Set up a key first: ssh-copy-id user@host"
-        alert.accessoryView = grid
-        alert.addButton(withTitle: "Add")
-        alert.addButton(withTitle: "Cancel")
-        nameField.nextKeyView = hostField
-        hostField.nextKeyView = userField
-        userField.nextKeyView = portField
-        portField.nextKeyView = keyField
-        keyField.nextKeyView = nameField
-        alert.window.initialFirstResponder = hostField
-
-        NSApp.activate(ignoringOtherApps: true)   // accessory app: bring the alert to the front
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        let trim: (NSTextField) -> String = { $0.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) }
-        let host = trim(hostField), user = trim(userField), key = trim(keyField)
-        let portText = trim(portField)
-        let port = portText.isEmpty ? 22 : (Int(portText) ?? -1)
-        var name = trim(nameField)
-        if name.isEmpty { name = host }
-
-        let bad: (String) -> Bool = { $0.hasPrefix("-") || $0.contains(where: { $0.isWhitespace || $0 == "@" }) }
-        var problem: String?
-        if host.isEmpty { problem = "Enter a host name or IP address." }
-        else if bad(host) { problem = "The host can't start with '-' or contain spaces or '@'." }
-        else if bad(user) { problem = "The user name can't start with '-' or contain spaces or '@'." }
-        else if !(1...65535).contains(port) { problem = "The port must be a number from 1 to 65535." }
-        if let problem {
-            let err = NSAlert()
-            err.messageText = "Couldn't add server"
-            err.informativeText = problem
-            err.alertStyle = .warning
-            NSApp.activate(ignoringOtherApps: true)
-            err.runModal()
-            return
-        }
-        remotes.add(ServerConfig(name: name, host: host, user: user, port: port,
-                                 identityFile: key.isEmpty ? nil : key))
+        if let r = ServerEditor.run() { remotes.add(r.config) }
     }
-    #endif
+
+    @objc private func importServers() { showSettings(tab: .servers) }
+    @objc private func manageServers() { showSettings(tab: .servers) }
 
     @objc private func toggleVisible() {
         let show = !panel.isVisible
@@ -252,29 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         UserDefaults.standard.set(panel.locked, forKey: Keys.locked)
     }
 
-    @objc private func toggleLogin() {
-        let service = SMAppService.mainApp
-        do {
-            if service.status == .enabled {
-                try service.unregister()
-            } else {
-                try service.register()
-                if service.status == .requiresApproval {
-                    SMAppService.openSystemSettingsLoginItems()
-                }
-            }
-        } catch {
-            let bundled = Bundle.main.bundleURL.pathExtension == "app"
-            let alert = NSAlert()
-            alert.messageText = "Couldn't change Launch at Login"
-            alert.informativeText = bundled
-                ? "\(error.localizedDescription)\n\nTry moving MacMonitor.app to /Applications, or add it manually in System Settings → General → Login Items."
-                : "Launch at Login only works when MacMonitor runs from the bundled MacMonitor.app (use build_app.sh)."
-            alert.alertStyle = .warning
-            NSApp.activate(ignoringOtherApps: true)
-            alert.runModal()
-        }
-    }
+    @objc private func toggleLogin() { LoginItem.set(!LoginItem.isEnabled) }
 
     @objc private func quit() { NSApp.terminate(nil) }
 }

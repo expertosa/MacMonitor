@@ -30,7 +30,16 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Tweetso</string>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.tweetso.macmonitor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>macmonitor</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

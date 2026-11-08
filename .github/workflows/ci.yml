@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-tests-linux:
+    name: Core tests (Linux)
+    runs-on: ubuntu-latest
+    container: swift:5.10
+    steps:
+      - uses: actions/checkout@v4
+      - name: swift test
+        run: swift test
+
+  macos:
+    name: Build & test (macOS)
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: swift test
+        run: swift test
+      - name: swift build (direct edition)
+        run: swift build -c release
+      - name: swift build (App Store edition, -DAPPSTORE)
+        run: swift build -c release -Xswiftc -DAPPSTORE --build-path .build-appstore
+      - name: Render panel snapshot
+        run: |
+          mkdir -p snapshots
+          MM_SNAPSHOT="$PWD/snapshots/panel.png" .build/release/MacMonitor
+          MM_SNAPSHOT="$PWD/snapshots/panel-dark.png" MM_SNAPSHOT_THEME=dark .build/release/MacMonitor
+          ls -la snapshots
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Xcode build (direct edition + widget)
+        run: |
+          cd Xcode && xcodegen generate
+          xcodebuild -project MacMonitor.xcodeproj -scheme MacMonitorDirect -configuration Release \
+            -destination 'generic/platform=macOS' -derivedDataPath ../.dd \
+            CODE_SIGNING_ALLOWED=NO build > ../xcode-direct.log 2>&1 \
+            || { grep -E "error:" -A3 ../xcode-direct.log | head -150; tail -n 30 ../xcode-direct.log; exit 1; }
+          test -d ../.dd/Build/Products/Release/MacMonitor.app/Contents/PlugIns/MacMonitorWidget.appex
+      - name: Xcode build (App Store edition + widget)
+        run: |
+          cd Xcode
+          xcodebuild -project MacMonitor.xcodeproj -scheme MacMonitorAppStore -configuration Release \
+            -destination 'generic/platform=macOS' -derivedDataPath ../.dd-appstore \
+            CODE_SIGNING_ALLOWED=NO build > ../xcode-appstore.log 2>&1 \
+            || { grep -E "error:" -A3 ../xcode-appstore.log | head -150; tail -n 30 ../xcode-appstore.log; exit 1; }
+      - name: Render widget snapshots
+        run: |
+          MM_WIDGET_SNAPSHOT="$PWD/snapshots" .build/release/MacMonitor
+          ls -la snapshots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: snapshots
+          path: snapshots/
