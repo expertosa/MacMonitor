@@ -54,7 +54,7 @@ struct MonitorView: View {
         let style = prefs.panelStyle
         let s = sampler.snapshot
         VStack(spacing: 0) {
-            PanelHeader(title: LocalHost.name,
+            PanelHeader(title: snapshotMode ? "MacBook Pro" : LocalHost.name,
                         subtitle: "up " + Fmt.duration(ProcessInfo.processInfo.systemUptime))
 
             VStack(alignment: .leading, spacing: style.s(Theme.sectionSpacing)) {

@@ -42,6 +42,7 @@ public struct PanelHeader: View {
                         .lineLimit(1)
                 }
             }
+            .padding(.horizontal, style.s(12))
             .frame(maxWidth: .infinity)
             .frame(height: style.s(34))
             Rectangle().fill(style.palette.divider).frame(height: 0.5)

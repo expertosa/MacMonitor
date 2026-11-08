@@ -25,6 +25,8 @@ public struct MacWidgetData: Equatable {
         m.total = 16 * 1_073_741_824
         m.used = UInt64(9.3 * 1_073_741_824)
         m.pressure = .normal
+        m.swapTotal = 2 * 1_073_741_824
+        m.swapUsed = UInt64(0.4 * 1_073_741_824)
         return MacWidgetData(hostName: "MacBook Pro", cpu: 0.27, memory: m,
                              bootVolume: Volume(id: "/", name: "Macintosh HD", free: 212_000_000_000,
                                                 total: 494_000_000_000),
@@ -102,7 +104,7 @@ public struct MacWidgetView: View {
         }
     }
 
-    private var meters: some View {
+    private func meters(full: Bool) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             CompactMeter(icon: "memorychip", title: "Memory",
                          detail: "\(Fmt.gb(data.memory.used))/\(Fmt.gb(data.memory.total)) GB",
@@ -115,8 +117,16 @@ public struct MacWidgetView: View {
                 CompactMeter(icon: b.charging ? "battery.100.bolt" : "battery.75", title: "Battery",
                              detail: b.watts.map { Fmt.watts($0) }, value: String(format: "%.0f%%", b.percent),
                              fraction: b.percent / 100)
-            } else if let g = data.gpu {
+            }
+            if let g = data.gpu, full || data.battery == nil {
                 CompactMeter(icon: "cube.transparent", title: "GPU", detail: nil, value: Fmt.pct(g), fraction: g)
+            }
+            if full {
+                CompactMeter(icon: "arrow.left.arrow.right", title: "Swap",
+                             detail: "pressure \(data.memory.pressure.label)",
+                             value: "\(Fmt.gb(data.memory.swapUsed)) GB",
+                             fraction: data.memory.swapTotal > 0
+                                ? Double(data.memory.swapUsed) / Double(data.memory.swapTotal) : 0)
             }
             HStack(spacing: 6) {
                 RateChip(arrow: "↓", rate: Fmt.rate(data.netIn))
@@ -125,23 +135,25 @@ public struct MacWidgetView: View {
         }
     }
 
-    private var medium: some View {
+    private var medium: some View { top(full: false) }
+
+    private func top(full: Bool) -> some View {
         HStack(spacing: 12) {
             VStack(spacing: 4) {
                 title
                 CPURing(load: data.cpu, diameter: 84, innerDiameter: 36)
             }
             .frame(width: 100)
-            meters
+            meters(full: full)
         }
     }
 
     private var large: some View {
         VStack(alignment: .leading, spacing: 10) {
-            medium
+            top(full: true)
             if !servers.isEmpty {
                 Rectangle().fill(style.palette.divider).frame(height: 0.5)
-                ServerRows(servers: Array(servers.prefix(4)))
+                ServerRows(servers: Array(servers.prefix(5)))
             }
             Spacer(minLength: 0)
         }
@@ -183,7 +195,7 @@ public struct ServersWidgetView: View {
                 Spacer(minLength: 0)
             }
             if let updated, size != .small {
-                Text("Updated \(updated, style: .relative) ago")
+                Text("Updated \(updated, style: .time)")
                     .font(style.font(8.5, .regular))
                     .foregroundColor(style.palette.ink.opacity(0.45))
             }
