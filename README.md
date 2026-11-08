@@ -1,101 +1,146 @@
 # MacMonitor
 
-A tiny menu bar + desktop resource monitor for macOS 13+ (Apple Silicon and Intel).
+A light menu bar app, desktop panel and **desktop widgets** that show your Mac's resources —
+and your **Linux and Mac servers over plain SSH**, with nothing to install on them.
 
-- **Menu bar:** `CPU 12%  RAM 54%`. The menu has Show/Hide Desktop Panel, Lock/Unlock Position, Launch at Login, Add Server…, Servers (each server has Reconnect and Remove), and Quit.
-- **Desktop panel:** titled with your Mac's name. It's a light, warm, glassy (Tangerine-style) rounded panel that sits on the desktop layer, behind your windows, on every Space. It shows:
-  - CPU total % as an 8-slice ring (slices light up with load), plus a 60-second bar history
-  - Memory used / total GB and % (used = active + wired + compressed)
-  - One bar per local disk volume: free / total (free means "available for important usage")
-  - Network download/upload per second, summed over all non-loopback interfaces
-- **Linux servers over SSH (optional):** each server you add gets a compact section under the Mac section. It has a status dot (green = online, orange = connecting, red = error), the load average, a CPU bar, a Memory bar (used = MemTotal − MemAvailable), one bar per real filesystem, and network ↓↑. Nothing is installed on the server.
-- When the panel is **locked**, clicks pass through it. When it's **unlocked**, a dashed outline appears and you can drag the panel. Its position is saved.
-- One 1-second timer drives the local stats. Disk is sampled every 10 s. It never lists processes. Each SSH server updates its own section every 2 s.
+![Desktop panel](docs/panel.png)
 
-## Requirements
-- macOS 13 Ventura or later
-- Xcode Command Line Tools (`xcode-select --install`). You don't need the full Xcode.
+| This Mac widget | Servers widget |
+| --- | --- |
+| ![This Mac widget](docs/widget-mac-medium.png) | ![Servers widget](docs/widget-servers-medium.png) |
 
-## Build & run
+## Features
+
+**This Mac**
+- Menu bar: choose any of CPU, memory, GPU, network, battery, CPU temperature — as text or with a
+  small CPU graph.
+- Desktop panel that sits behind your windows on every Space: CPU ring + history, memory (with
+  pressure and swap), GPU, battery (charge, power draw, time left), temperatures and fans,
+  every local disk, network, and the top 3 processes. Warm, dark or system theme; three sizes;
+  pin it to a screen corner or drag it anywhere.
+- Widgets (Notification Center, and the desktop on macOS 14+): *This Mac* in small, medium and
+  large; the large one also lists your servers.
+
+**Servers (direct edition)**
+- One long-lived `ssh` session per server runs a tiny POSIX `sh` loop. No agent, no daemon.
+- Linux: CPU, memory, every real filesystem, network, load, uptime, Docker containers, chosen
+  systemd services, `reboot-required`, pending apt/dnf updates.
+- macOS servers: CPU, memory, disks, network, load, uptime.
+- *Servers* widget, per-server compact mode, hide filesystems, reorder, edit.
+- Import hosts from `~/.ssh/config`; "Open SSH in Terminal"; "Copy SSH Command".
+
+**Alerts** (macOS notifications, off by default)
+- Sustained high CPU, critical memory pressure, disk almost full, low battery.
+- Server unreachable / back online, server CPU or disk, a watched service stops, reboot required.
+
+## Install
+
+**Download** the DMG from [Releases](https://github.com/expertosa/MacMonitor/releases), open it and
+drag MacMonitor to Applications. Or with Homebrew (once the tap is published, see `Casks/`):
 ```bash
-cd MacMonitor
-chmod +x build_app.sh
-./build_app.sh                 # builds release + assembles and ad-hoc signs MacMonitor.app
-open MacMonitor.app
+brew install --cask expertosa/tap/macmonitor
 ```
-To install it:
+If the release is ad-hoc signed (see its notes), clear the quarantine flag once:
 ```bash
-cp -R MacMonitor.app /Applications/
-open /Applications/MacMonitor.app
+xattr -dr com.apple.quarantine /Applications/MacMonitor.app
 ```
 
-Quick dev run without the bundle (Launch at Login is unavailable in this mode):
-```bash
-swift build -c release && .build/release/MacMonitor
-```
+To add a widget: right-click the desktop → **Edit Widgets…** (macOS 14+) or open Notification
+Center → **Edit Widgets**, then search for *MacMonitor*.
 
-Optional universal binary (this may need the full Xcode instead of only CLT):
-```bash
-UNIVERSAL=1 ./build_app.sh
-```
+## Editions
 
-## Monitoring Linux servers (SSH)
-MacMonitor runs one long-lived `/usr/bin/ssh` session per server. That session runs a small POSIX `sh` loop which prints `/proc/stat`, `/proc/meminfo`, `df`, `/proc/net/dev`, and `/proc/loadavg` every 2 seconds. The server only needs `sh`, `df`, `grep`, `head`, `tail`, and `/proc`, so any normal Linux distribution works.
+| | Direct (DMG / Homebrew) | Mac App Store |
+| --- | --- | --- |
+| Menu bar, panel, widgets, alerts | ✓ | ✓ |
+| SSH servers + Servers widget | ✓ | – (App Sandbox can't run `ssh`) |
+| Temperatures, fans, top processes | ✓ | – (blocked by the sandbox) |
+| Update check | GitHub Releases | App Store |
 
-**1. Set up key-based SSH login first.** MacMonitor uses `BatchMode=yes`, so it can't type passwords or key passphrases:
-```bash
-ssh-keygen -t ed25519            # only if you don't have a key yet
-ssh-copy-id user@host            # add -p 2222 for a non-standard port
-ssh user@host true               # must succeed without a password prompt
-```
-A key with a passphrase works if it's loaded in the agent / macOS keychain (`ssh-add --apple-use-keychain ~/.ssh/id_ed25519`).
-New host keys are accepted automatically on first connect (`StrictHostKeyChecking=accept-new`). A *changed* host key is refused, and the server shows the error.
+## Build from source
 
-**2. Add the server:** choose **Add Server…** in the menu bar menu, then fill in Name (optional, defaults to the host), Host, User, Port (default 22), and an optional identity file such as `~/.ssh/id_ed25519`.
-Settings from `~/.ssh/config` still apply (ProxyJump, IdentityFile, and so on). Note that the Port field is always passed as `-p`.
+Requirements: macOS 13+, Xcode 15+ (or only the Command Line Tools for the quick build).
 
-**3. Remove or reconnect:** use **Servers → <name> → Remove / Reconnect**.
-
-Behavior:
-- If the connection drops or fails, the section turns red and shows ssh's error, for example `Permission denied (publickey)` or `Connection refused`. MacMonitor then retries after 5 s, 10 s, 30 s, and every 60 s after that. The backoff resets once data arrives.
-- A dead link is detected within about 30 s (`ServerAliveInterval=15`, `ServerAliveCountMax=2`).
-- CPU % comes from `/proc/stat` deltas. Network sums all interfaces except `lo` and container/virtual links (`veth*`, `docker*`, `br-*`, `virbr*`, …), so container traffic isn't counted twice.
-- Disks are real filesystems from `df` (no tmpfs/overlay/squashfs/…). MacMonitor skips `/boot*`, `/snap*`, and `/run*`, and lists each device once. The percentage matches `df`'s Use%.
-- Quitting MacMonitor terminates every ssh session.
-- The server list is stored as JSON in the user defaults. Reset it with `defaults delete com.tweetso.macmonitor remoteServers`.
-
-## Snapshot debug mode
-Render the panel to a PNG (on a sample wallpaper gradient) without screenshots:
-```bash
-MM_SNAPSHOT=/tmp/panel.png .build/release/MacMonitor   # writes the PNG after ~3 s, then quits
-```
-Materials can't be captured by `ImageRenderer`, so the snapshot uses a flat translucent white fill instead of the blur.
-In this mode no SSH connections are made. Instead, a fake online server named `linux-server` with three filesystems is shown, so you can check the remote layout.
-
-## Launch at login
-This uses `SMAppService.mainApp`, which only works from the `.app` bundle. It works best from `/Applications`.
-If macOS asks for approval, System Settings → General → Login Items opens automatically.
-If it fails, an alert explains why.
-
-## Notes
-- The app runs as an accessory app (`LSUIElement`), so it has no Dock icon. Quit it from the menu bar item.
-- If Gatekeeper complains after you copy the app from another machine, run `xattr -dr com.apple.quarantine MacMonitor.app`.
-- Reset the saved panel position: `defaults delete com.tweetso.macmonitor panelOrigin`.
-
-## Mac App Store edition (no SSH)
-The App Store build is compiled with the `APPSTORE` Swift flag. That flag compiles out the whole
-remote-server feature (`RemoteSampler.swift`, `RemoteParse.swift`, the **Add Server…** / **Servers**
-menu items, and the server sections in the panel), because App Sandbox doesn't allow launching
-`/usr/bin/ssh`. The default SwiftPM / `build_app.sh` build is still the full edition.
-
-The Xcode project is generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen) from `AppStore/project.yml`:
-App Sandbox (no other entitlements), Hardened Runtime, `LSUIElement`, category Utilities, an app icon asset,
-and a privacy manifest (UserDefaults CA92.1, disk space 85F4.1, system boot time 35F9.1).
+**Full app with widgets** (needs Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen)):
 ```bash
 brew install xcodegen
-cd AppStore
-xcodegen generate                    # -> MacMonitorAppStore.xcodeproj
-./archive_upload.sh                  # archive + upload to App Store Connect (team NWPTRYJ9FL)
-EXPORT_ONLY=1 ./archive_upload.sh    # archive + export locally, no upload
+cd Xcode && xcodegen generate
+open MacMonitor.xcodeproj          # schemes: MacMonitorDirect, MacMonitorAppStore
 ```
-Quick check without Xcode: `swift build -c release -Xswiftc -DAPPSTORE`.
+Signed, notarized DMG for distribution:
+```bash
+NOTARY_PROFILE=my-profile Xcode/release_direct.sh
+```
+App Store archive + upload:
+```bash
+Xcode/archive_upload.sh
+```
+
+**Quick build without widgets** (Command Line Tools only):
+```bash
+./build_app.sh && open MacMonitor.app
+```
+
+**Tests** (the core library also builds and tests on Linux):
+```bash
+swift test
+```
+
+### Project layout
+```
+Sources/MacMonitorCore   parsing, local samplers, alerts, ssh_config import, widget data (Foundation only)
+Sources/MacMonitorUI     SwiftUI theme + meters + widget views shared by the panel and the widget
+Sources/MacMonitor       the app: menu bar, desktop panel, settings, SSH sessions, SMC, notifications
+Widget/                  WidgetKit extension
+Xcode/                   XcodeGen spec, entitlements, signing / release scripts
+Tests/                   unit tests for MacMonitorCore
+```
+
+## Monitoring servers over SSH
+
+**1. Set up key-based SSH login.** MacMonitor uses `BatchMode=yes`, so it can't type passwords:
+```bash
+ssh-keygen -t ed25519            # only if you don't have a key yet
+ssh-copy-id user@host
+ssh user@host true               # must succeed without a password prompt
+```
+A key with a passphrase works if it's in the agent / keychain (`ssh-add --apple-use-keychain ~/.ssh/id_ed25519`).
+New host keys are accepted on first connect (`StrictHostKeyChecking=accept-new`); a *changed* host key is refused.
+
+**2. Add servers:** menu bar → **Add Server…**, or **Import from ~/.ssh/config…**. Imported entries
+connect through their alias, so `ProxyJump`, `IdentityFile` and other options keep working.
+Optionally list systemd **services** to watch (e.g. `nginx postgresql`).
+
+**3. Manage:** menu bar → **Servers → <name>** (Open SSH in Terminal, Copy SSH Command, Edit,
+Compact, Reconnect, Remove) or **Settings → Servers** (reorder, compact, hide disks).
+
+How it works:
+- The remote loop prints `/proc/stat`, `/proc/meminfo`, `df`, `/proc/net/dev` and `/proc/loadavg`
+  every 2 s (on macOS: `sysctl`, `vm_stat`, `df`, `netstat`, `top`). Slower checks (services,
+  Docker, reboot flag) run every minute and the update count every 30 minutes.
+- Failed connections show ssh's error and retry after 5 s, 10 s, 30 s, then every 60 s.
+  Dead links are detected within ~30 s (`ServerAliveInterval=15`, `ServerAliveCountMax=2`).
+- Network totals skip `lo` and container links (`veth*`, `docker*`, `br-*`, …) so traffic isn't
+  counted twice. Disks skip tmpfs/overlay/squashfs, `/boot*`, `/snap*`, `/run*`.
+- The server list is JSON in the user defaults: `defaults delete com.tweetso.macmonitor remoteServers` resets it.
+
+## Snapshots (screenshots without a screen)
+```bash
+swift build -c release
+MM_SNAPSHOT=/tmp/panel.png .build/release/MacMonitor                       # panel, warm theme
+MM_SNAPSHOT=/tmp/dark.png MM_SNAPSHOT_THEME=dark .build/release/MacMonitor # panel, dark theme
+MM_WIDGET_SNAPSHOT=/tmp/widgets .build/release/MacMonitor                  # every widget size
+```
+Snapshot mode makes no SSH connections; it shows a demo `linux-server`. CI renders these on every push.
+
+## Notes
+- The app is an accessory app (`LSUIElement`): no Dock icon. Quit it from the menu bar.
+- Launch at Login uses `SMAppService` and works from the `.app` bundle (best from `/Applications`).
+- Reset the saved panel position: `defaults delete com.tweetso.macmonitor panelOrigin`.
+- Widgets refresh on WidgetKit's schedule (every few minutes). The app asks for an immediate
+  refresh when a server changes state.
+- Temperatures and fans are read from the SMC; sensor keys differ between Mac models, so some
+  models show nothing.
+
+## License
+[MIT](LICENSE)
