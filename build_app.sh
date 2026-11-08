@@ -1,5 +1,7 @@
 #!/bin/bash
 # Builds MacMonitor.app with SwiftPM (Command Line Tools only, no Xcode project).
+# This quick build has no desktop widget: WidgetKit extensions need the Xcode build
+# (Xcode/release_direct.sh, or `xcodegen generate` in Xcode/).
 # Usage: ./build_app.sh            # native arch (arm64 on Apple Silicon, x86_64 on Intel)
 #        UNIVERSAL=1 ./build_app.sh  # arm64 + x86_64 (may require full Xcode)
 set -euo pipefail
@@ -8,6 +10,8 @@ cd "$(dirname "$0")"
 APP_NAME="MacMonitor"
 BUNDLE_ID="com.tweetso.macmonitor"
 APP="$PWD/$APP_NAME.app"
+VERSION="$(cat VERSION 2>/dev/null || echo 1.0)"
+BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 
 if [[ "${UNIVERSAL:-0}" == "1" ]]; then
     ARCH_FLAGS=(--arch arm64 --arch x86_64)
@@ -26,7 +30,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
 
-ICON_SRC="AppStore/Icon/AppIcon-1024.png"
+ICON_SRC="Xcode/Icon/AppIcon-1024.png"
 if [[ -f "$ICON_SRC" ]] && command -v iconutil >/dev/null; then
     echo "==> Building AppIcon.icns"
     ICONSET="$(mktemp -d)/AppIcon.iconset"; mkdir -p "$ICONSET"
@@ -50,8 +54,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIconFile</key>            <string>AppIcon</string>
     <key>CFBundleDisplayName</key>         <string>$APP_NAME</string>
     <key>CFBundlePackageType</key>         <string>APPL</string>
-    <key>CFBundleShortVersionString</key>  <string>1.0</string>
-    <key>CFBundleVersion</key>             <string>1</string>
+    <key>CFBundleShortVersionString</key>  <string>$VERSION</string>
+    <key>CFBundleVersion</key>             <string>$BUILD_NUMBER</string>
+    <key>CFBundleURLTypes</key>
+    <array><dict>
+        <key>CFBundleURLName</key>         <string>$BUNDLE_ID</string>
+        <key>CFBundleURLSchemes</key>      <array><string>macmonitor</string></array>
+    </dict></array>
     <key>LSMinimumSystemVersion</key>      <string>13.0</string>
     <key>LSUIElement</key>                 <true/>
     <key>NSHighResolutionCapable</key>     <true/>

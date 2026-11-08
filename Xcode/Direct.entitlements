@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Not sandboxed: launches /usr/bin/ssh and reads the SMC. Hardened Runtime + notarization. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>NWPTRYJ9FL.com.tweetso.macmonitor</string>
+	</array>
+</dict>
+</plist>

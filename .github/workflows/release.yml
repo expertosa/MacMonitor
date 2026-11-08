@@ -1,0 +1,126 @@
+name: Release
+
+# Push a tag like v1.1.0 (matching the VERSION file) to build the direct-download edition with
+# its widget, package a DMG + ZIP, and attach them to a GitHub release.
+#
+# Optional secrets for a signed + notarized build (otherwise the app is ad-hoc signed):
+#   MACOS_CERT_P12        base64 of a "Developer ID Application" certificate exported as .p12
+#   MACOS_CERT_PASSWORD   password of that .p12
+#   NOTARY_KEY_P8         base64 of an App Store Connect API key (.p8)
+#   NOTARY_KEY_ID, NOTARY_ISSUER_ID
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: bash
+    env:
+      HAS_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
+      HAS_NOTARY: ${{ secrets.NOTARY_KEY_P8 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check version
+        run: |
+          VERSION="$(cat VERSION)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$VERSION" ]]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match VERSION file ($VERSION)" >&2; exit 1
+          fi
+      - name: Tests
+        run: swift test
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Import signing certificate
+        if: env.HAS_CERT == 'true'
+        env:
+          P12: ${{ secrets.MACOS_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KC="$RUNNER_TEMP/build.keychain"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p ci "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p ci "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KC"
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KC"
+          security list-keychains -d user -s "$KC" login.keychain
+      - name: Build
+        run: |
+          cd Xcode && xcodegen generate
+          if [[ "$HAS_CERT" == "true" ]]; then
+            SIGN=(CODE_SIGN_STYLE=Manual "CODE_SIGN_IDENTITY=Developer ID Application" DEVELOPMENT_TEAM=NWPTRYJ9FL
+                  "OTHER_CODE_SIGN_FLAGS=--timestamp" PROVISIONING_PROFILE_SPECIFIER=)
+          else
+            SIGN=(CODE_SIGNING_ALLOWED=NO)
+          fi
+          xcodebuild -project MacMonitor.xcodeproj -scheme MacMonitorDirect -configuration Release \
+            -destination 'generic/platform=macOS' -derivedDataPath build/dd \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$(git rev-list --count HEAD)" \
+            "${SIGN[@]}" build > build.log 2>&1 \
+            || { grep -E "error:" -A3 build.log | head -100; tail -n 40 build.log; exit 1; }
+          mkdir -p build/out
+          cp -R build/dd/Build/Products/Release/MacMonitor.app build/out/
+      - name: Ad-hoc sign (no certificate)
+        if: env.HAS_CERT != 'true'
+        run: |
+          APP=Xcode/build/out/MacMonitor.app
+          codesign --force -s - --entitlements Widget/MacMonitorWidget.entitlements \
+            "$APP/Contents/PlugIns/MacMonitorWidget.appex"
+          codesign --force -s - --entitlements Xcode/Direct.entitlements "$APP"
+          codesign --verify --deep "$APP"
+      - name: Notarize
+        if: env.HAS_CERT == 'true' && env.HAS_NOTARY == 'true'
+        env:
+          KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          ISSUER: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          echo "$KEY_P8" | base64 --decode > "$RUNNER_TEMP/key.p8"
+          APP=Xcode/build/out/MacMonitor.app
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --key "$RUNNER_TEMP/key.p8" \
+            --key-id "$KEY_ID" --issuer "$ISSUER" --wait
+          xcrun stapler staple "$APP"
+      - name: Package
+        run: |
+          cd Xcode/build/out
+          ditto -c -k --keepParent MacMonitor.app "MacMonitor-$VERSION.zip"
+          STAGE="$(mktemp -d)"; cp -R MacMonitor.app "$STAGE/"; ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "MacMonitor $VERSION" -srcfolder "$STAGE" -ov -format UDZO "MacMonitor-$VERSION.dmg"
+          shasum -a 256 MacMonitor-*.dmg MacMonitor-*.zip | tee SHA256SUMS.txt
+          {
+            echo "## MacMonitor $VERSION"
+            echo
+            awk "/^## \\[$VERSION\\]/{f=1;next}/^## \\[/{f=0}f" ../../../CHANGELOG.md
+            echo
+            if [[ "$HAS_CERT" != "true" ]]; then
+              echo "> This build is ad-hoc signed. After copying it to /Applications run:"
+              echo "> \`xattr -dr com.apple.quarantine /Applications/MacMonitor.app\`"
+            fi
+            echo
+            echo '```'; cat SHA256SUMS.txt; echo '```'
+          } > notes.md
+      - uses: softprops/action-gh-release@v2
+        if: github.ref_type == 'tag'
+        with:
+          body_path: Xcode/build/out/notes.md
+          files: |
+            Xcode/build/out/MacMonitor-*.dmg
+            Xcode/build/out/MacMonitor-*.zip
+            Xcode/build/out/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type != 'tag'
+        with:
+          name: MacMonitor-${{ env.VERSION }}
+          path: Xcode/build/out/MacMonitor-*.*

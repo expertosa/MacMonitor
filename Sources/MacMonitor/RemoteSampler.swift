@@ -3,6 +3,7 @@
 #if !APPSTORE
 import Foundation
 import Combine
+import MacMonitorCore
 
 enum RemoteStatus: Equatable {
     case connecting
@@ -16,7 +17,9 @@ enum RemoteStatus: Equatable {
 @MainActor
 final class RemoteSampler: ObservableObject, Identifiable {
     nonisolated let id: UUID
-    let config: ServerConfig
+    @Published private(set) var config: ServerConfig
+    /// Last time a sample arrived (for "updated … ago").
+    private(set) var lastData: Date?
 
     @Published private(set) var snapshot = RemoteSnapshot()
     @Published private(set) var status: RemoteStatus = .connecting
@@ -47,6 +50,7 @@ final class RemoteSampler: ObservableObject, Identifiable {
         self.snapshot = snapshot
         self.status = .online
         self.stopped = true
+        self.lastData = Date()
     }
 
     /// Key that changes whenever this server's section changes height.
@@ -58,7 +62,23 @@ final class RemoteSampler: ObservableObject, Identifiable {
         case .online: s = 1
         case .error(let msg): s = 2; errHash = msg.count / 30   // ~ line-wrap bucket
         }
-        return [s, errHash, snapshot.hasData ? 1 : 0, snapshot.disks.count]
+        return [s, errHash, snapshot.hasData ? 1 : 0, config.hideDisks ? 0 : snapshot.disks.count,
+                config.collapsed ? 1 : 0, extrasKey]
+    }
+
+    /// Changes when the extras row (uptime, docker, services, warnings) changes size.
+    private var extrasKey: Int {
+        let s = snapshot
+        return s.services.count * 7 + WidgetServer.warnings(for: s).count * 3
+            + (s.docker == nil ? 0 : 1) + (s.uptime == nil ? 0 : 2)
+    }
+
+    /// Display-only changes (name, collapsed, hide disks) apply without reconnecting.
+    func updateDisplay(_ new: ServerConfig) {
+        guard new.id == id else { return }
+        let oldKey = layoutKey
+        config = new
+        if layoutKey != oldKey { onLayoutChange?() }
     }
 
     // MARK: Lifecycle
@@ -155,16 +175,17 @@ final class RemoteSampler: ObservableObject, Identifiable {
         guard gen == generation, !stopped else { return }
         var s = snapshot
         if let h = result.hostname { s.hostname = h }
+        if let os = result.os { s.os = os }
         for raw in result.samples { metrics.apply(raw, to: &s) }
-        let oldDiskCount = snapshot.disks.count
-        let oldHasData = snapshot.hasData
+        let oldKey = layoutKey
         if s != snapshot { snapshot = s }
         if !result.samples.isEmpty {
             onlineThisRun = true
             attempt = 0
+            lastData = Date()
             setStatus(.online)
         }
-        if oldDiskCount != s.disks.count || oldHasData != s.hasData { onLayoutChange?() }
+        if layoutKey != oldKey { onLayoutChange?() }
     }
 
     private func processExited(code: Int32, generation gen: Int) {
@@ -271,6 +292,47 @@ final class RemoteManager: ObservableObject {
 
     func reconnect(id: UUID) { servers.first(where: { $0.id == id })?.reconnect() }
 
+    func server(id: UUID) -> RemoteSampler? { servers.first { $0.id == id } }
+
+    /// Applies an edited config: reconnects only when connection settings changed.
+    func update(_ config: ServerConfig) {
+        guard let i = servers.firstIndex(where: { $0.id == config.id }) else { return }
+        let old = servers[i]
+        if old.config.connectionDiffers(from: config) {
+            old.stop()
+            let s = makeSampler(config)
+            servers[i] = s
+            s.start()
+        } else {
+            old.updateDisplay(config)
+        }
+        save()
+        notifyLayout()
+    }
+
+    func move(id: UUID, by offset: Int) {
+        guard let i = servers.firstIndex(where: { $0.id == id }) else { return }
+        let j = i + offset
+        guard servers.indices.contains(j) else { return }
+        servers.swapAt(i, j)
+        save()
+        notifyLayout()
+    }
+
+    /// Adds every config whose host isn't monitored yet; returns how many were added.
+    @discardableResult
+    func importServers(_ configs: [ServerConfig]) -> Int {
+        var added = 0
+        for c in configs where !servers.contains(where: { $0.config.host == c.host && $0.config.port == c.port }) {
+            let s = makeSampler(c)
+            servers.append(s)
+            s.start()
+            added += 1
+        }
+        if added > 0 { save(); notifyLayout() }
+        return added
+    }
+
     func stopAll() { servers.forEach { $0.stop() } }
 
     private func makeSampler(_ config: ServerConfig) -> RemoteSampler {
@@ -297,7 +359,8 @@ final class RemoteManager: ObservableObject {
 
     private static func demoServer() -> RemoteSampler {
         let gb: UInt64 = 1_000_000_000
-        let cfg = ServerConfig(name: "linux-server", host: "linux-server.local", user: "admin")
+        let cfg = ServerConfig(name: "linux-server", host: "linux-server.local", user: "admin",
+                               services: ["nginx", "postgresql"])
         var s = RemoteSnapshot()
         s.hostname = "linux-server"
         s.hasData = true
@@ -312,6 +375,11 @@ final class RemoteManager: ObservableObject {
         s.netIn = 1_240_000
         s.netOut = 86_000
         s.load = [0.42, 0.37, 0.31]
+        s.uptime = 12 * 86_400 + 4 * 3_600
+        s.os = "Linux"
+        s.docker = DockerSummary(running: 5, total: 6)
+        s.services = [ServiceState(name: "nginx", state: "active"), ServiceState(name: "postgresql", state: "failed")]
+        s.pendingUpdates = 4
         return RemoteSampler(demo: cfg, snapshot: s)
     }
 }
