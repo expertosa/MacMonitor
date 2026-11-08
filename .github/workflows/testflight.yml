@@ -63,6 +63,19 @@ jobs:
         run: |
           echo "$ASC_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
           echo "AUTH=-allowProvisioningUpdates -authenticationKeyPath $RUNNER_TEMP/AuthKey.p8 -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID" >> "$GITHUB_ENV"
+      - name: Inspect latest Apple build
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          BUILD="$(awk -F'"' '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ { print $2; exit }' Xcode/project.yml)"
+          python3 scripts/asc_latest_build.py check \
+            --key "$RUNNER_TEMP/AuthKey.p8" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER_ID" \
+            --bundle-id com.tweetso.macmonitor \
+            --marketing "$VERSION" \
+            --build "$BUILD" | tee "$RUNNER_TEMP/asc-builds.json"
+          echo "Apple build check:" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/asc-builds.json" >> "$GITHUB_STEP_SUMMARY"
       - name: Archive
         run: |
           cd Xcode && xcodegen generate
@@ -97,4 +110,4 @@ jobs:
             -exportOptionsPlist ExportOptions.plist -exportPath "$RUNNER_TEMP/export" $AUTH > export.log 2>&1 \
             || { grep -iE "error|invalid|missing" export.log | head -60; tail -n 40 export.log; exit 1; }
           tail -n 15 export.log
-          echo "Uploaded. The build shows up in App Store Connect → TestFlight after processing." >> "$GITHUB_STEP_SUMMARY"
+          echo "Uploaded to TestFlight processing. This did not submit the app for App Store review." >> "$GITHUB_STEP_SUMMARY"

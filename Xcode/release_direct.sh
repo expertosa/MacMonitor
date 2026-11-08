@@ -10,8 +10,15 @@
 # Without credentials the app is still signed but not notarized (SKIP_NOTARIZE=1 to silence the warning).
 set -euo pipefail
 cd "$(dirname "$0")"
-VERSION="$(cat ../VERSION)"
-BUILD_NUMBER="${BUILD_NUMBER:-$(git rev-list --count HEAD)}"
+VERSION="$(tr -d '[:space:]' < ../VERSION)"
+BUILD_NUMBER="${BUILD_NUMBER:-$(awk -F'"' '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ { print $2; exit }' project.yml)}"
+case "$BUILD_NUMBER" in
+    ''|*[!0-9]*|0*) echo "CFBundleVersion must be a short sequential integer from project.yml (got '${BUILD_NUMBER:-empty}')" >&2; exit 1 ;;
+esac
+if [[ ${#BUILD_NUMBER} -gt 4 ]]; then
+    echo "CFBundleVersion must be a short sequential integer, not a timestamp (got '$BUILD_NUMBER')" >&2
+    exit 1
+fi
 OUT="$PWD/build"
 ARCHIVE="$OUT/MacMonitor-Direct.xcarchive"
 EXPORT="$OUT/export-direct"
