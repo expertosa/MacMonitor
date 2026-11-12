@@ -163,14 +163,20 @@ jobs:
             find "$RUNNER_TEMP/export" -maxdepth 2 -print
             exit 1
           fi
-          python3 "$GITHUB_WORKSPACE/scripts/asc_latest_build.py" ensure-app \
+          # The macOS app already exists: Apple ID 6834033069, name "MacMonitor by Tweetso",
+          # bundle com.tweetso.macmonitor. Look it up by bundle ID. Do not POST /v1/apps.
+          python3 "$GITHUB_WORKSPACE/scripts/asc_latest_build.py" lookup-app \
             --key "$RUNNER_TEMP/AuthKey.p8" \
             --key-id "$ASC_KEY_ID" \
             --issuer "$ASC_ISSUER_ID" \
             --bundle-id com.tweetso.macmonitor \
-            --name MacMonitor --sku macmonitor --team-id NWPTRYJ9FL \
+            --apple-id 6834033069 \
             | tee "$RUNNER_TEMP/asc-app.json"
           APPLE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["appleId"])' "$RUNNER_TEMP/asc-app.json")"
+          if [[ "$APPLE_ID" != "6834033069" ]]; then
+            echo "::error::Expected App Store Connect app 6834033069, got ${APPLE_ID:-empty}."
+            exit 1
+          fi
           echo "App Store Connect app $APPLE_ID" | tee -a "$GITHUB_STEP_SUMMARY"
           keydir="$HOME/.appstoreconnect/private_keys"
           mkdir -p "$keydir"
@@ -183,4 +189,15 @@ jobs:
             || { set +e +o pipefail; echo "::group::upload log"; grep -niE "error|invalid|missing|fail" upload.log | head -40; echo "----- tail -----"; tail -n 40 upload.log; echo "::endgroup::"; rm -f "$keydir/AuthKey_${ASC_KEY_ID}.p8"; exit 1; }
           rm -f "$keydir/AuthKey_${ASC_KEY_ID}.p8"
           tail -n 20 upload.log
+          VERSION="$(tr -d '[:space:]' < "$GITHUB_WORKSPACE/VERSION")"
+          BUILD="$(awk -F'"' '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ { print $2; exit }' project.yml)"
+          python3 "$GITHUB_WORKSPACE/scripts/asc_latest_build.py" status \
+            --key "$RUNNER_TEMP/AuthKey.p8" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER_ID" \
+            --bundle-id com.tweetso.macmonitor \
+            --marketing "$VERSION" \
+            --build "$BUILD" | tee "$RUNNER_TEMP/asc-status.json" || true
           echo "Uploaded to TestFlight processing. This did not submit the app for App Store review." >> "$GITHUB_STEP_SUMMARY"
+          echo "Processing status:" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/asc-status.json" >> "$GITHUB_STEP_SUMMARY"
