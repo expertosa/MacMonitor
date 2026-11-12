@@ -163,14 +163,23 @@ jobs:
             find "$RUNNER_TEMP/export" -maxdepth 2 -print
             exit 1
           fi
+          python3 "$GITHUB_WORKSPACE/scripts/asc_latest_build.py" ensure-app \
+            --key "$RUNNER_TEMP/AuthKey.p8" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER_ID" \
+            --bundle-id com.tweetso.macmonitor \
+            --name MacMonitor --sku macmonitor --team-id NWPTRYJ9FL \
+            | tee "$RUNNER_TEMP/asc-app.json"
+          APPLE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["appleId"])' "$RUNNER_TEMP/asc-app.json")"
+          echo "App Store Connect app $APPLE_ID" | tee -a "$GITHUB_STEP_SUMMARY"
           keydir="$HOME/.appstoreconnect/private_keys"
           mkdir -p "$keydir"
           cp "$RUNNER_TEMP/AuthKey.p8" "$keydir/AuthKey_${ASC_KEY_ID}.p8"
           chmod 600 "$keydir/AuthKey_${ASC_KEY_ID}.p8"
           # Xcode's upload path failed with "Error Downloading App Information".
-          # altool uploads the signed pkg with the same API key. The key file is not printed.
+          # altool uploads the signed pkg. The key file is not printed.
           xcrun altool --upload-app --type macos --file "$pkg" \
-            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" > upload.log 2>&1 \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" --apple-id "$APPLE_ID" > upload.log 2>&1 \
             || { set +e +o pipefail; echo "::group::upload log"; grep -niE "error|invalid|missing|fail" upload.log | head -40; echo "----- tail -----"; tail -n 40 upload.log; echo "::endgroup::"; rm -f "$keydir/AuthKey_${ASC_KEY_ID}.p8"; exit 1; }
           rm -f "$keydir/AuthKey_${ASC_KEY_ID}.p8"
           tail -n 20 upload.log

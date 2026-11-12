@@ -177,29 +177,85 @@ def _token(key_path: Path, key_id: str, issuer: str) -> str:
     return f"{header}.{payload}.{signature}"
 
 
-def _get(url: str, token: str) -> dict:
-    # curl uses the Mac trust store. urllib on the self-hosted runner fails with
-    # CERTIFICATE_VERIFY_FAILED because its Python does not see the system roots.
-    completed = subprocess.run(
-        [
-            "curl", "--silent", "--show-error", "--fail-with-body",
-            "--header", f"Authorization: Bearer {token}",
-            "--header", "Accept: application/json",
-            url,
-        ],
-        capture_output=True,
-        check=False,
-    )
+def _request(method: str, url: str, token: str, payload: dict | None = None) -> dict:
+    command = [
+        "curl", "--silent", "--show-error", "--fail-with-body",
+        "-X", method,
+        "--header", f"Authorization: Bearer {token}",
+        "--header", "Accept: application/json",
+    ]
+    if payload is not None:
+        command += ["--header", "Content-Type: application/json", "--data", json.dumps(payload)]
+    command.append(url)
+    completed = subprocess.run(command, capture_output=True, check=False)
     body = completed.stdout.decode("utf-8", "replace")
     if completed.returncode != 0:
-        detail = completed.stderr.decode("utf-8", "replace").strip()[:400]
-        if not detail:
-            detail = body[:400]
-        raise RuntimeError(f"App Store Connect request failed ({detail})")
+        detail = body[:500] or completed.stderr.decode("utf-8", "replace").strip()[:400]
+        raise RuntimeError(f"App Store Connect {method} failed ({detail})")
+    if not body.strip():
+        return {}
     try:
         return json.loads(body)
     except json.JSONDecodeError as error:
         raise RuntimeError(f"App Store Connect returned non-JSON ({error})") from None
+
+
+def _get(url: str, token: str) -> dict:
+    # curl uses the Mac trust store. urllib on the self-hosted runner fails with
+    # CERTIFICATE_VERIFY_FAILED because its Python does not see the system roots.
+    return _request("GET", url, token)
+
+
+def ensure_macos_app(key_path: Path, key_id: str, issuer: str, bundle_id: str,
+                     name: str, sku: str, team_id: str) -> dict:
+    """Return the App Store Connect app id, creating the macOS app when it is missing."""
+    token = _token(key_path, key_id, issuer)
+    apps_url = API + "/v1/apps?" + urllib.parse.urlencode(
+        {"filter[bundleId]": bundle_id, "limit": "5", "fields[apps]": "bundleId,name"}
+    )
+    apps = _request("GET", apps_url, token).get("data") or []
+    if apps:
+        return {"created": False, "appleId": apps[0]["id"], "bundleId": bundle_id}
+    bundles_url = API + "/v1/bundleIds?" + urllib.parse.urlencode(
+        {"filter[identifier]": bundle_id, "filter[platform]": "MAC_OS", "limit": "5"}
+    )
+    bundles = _request("GET", bundles_url, token).get("data") or []
+    if bundles:
+        bundle_resource = bundles[0]["id"]
+        bundle_created = False
+    else:
+        created_bundle = _request("POST", API + "/v1/bundleIds", token, {
+            "data": {
+                "type": "bundleIds",
+                "attributes": {
+                    "identifier": bundle_id,
+                    "name": name,
+                    "platform": "MAC_OS",
+                    "seedId": team_id,
+                },
+            }
+        })
+        bundle_resource = created_bundle["data"]["id"]
+        bundle_created = True
+    created_app = _request("POST", API + "/v1/apps", token, {
+        "data": {
+            "type": "apps",
+            "attributes": {
+                "sku": sku,
+                "primaryLocale": "en-US",
+                "name": name,
+            },
+            "relationships": {
+                "bundleId": {"data": {"type": "bundleIds", "id": bundle_resource}},
+            },
+        }
+    })
+    return {
+        "created": True,
+        "bundleCreated": bundle_created,
+        "appleId": created_app["data"]["id"],
+        "bundleId": bundle_id,
+    }
 
 
 def fetch_records(key_path: Path, key_id: str, issuer: str, bundle_id: str) -> tuple[str | None, list[dict]]:
@@ -300,14 +356,26 @@ def main(argv: list[str]) -> int:
         self_test()
         return 0
     parser = argparse.ArgumentParser(description="Check the latest App Store Connect build")
-    parser.add_argument("command", choices=["check"])
+    parser.add_argument("command", choices=["check", "ensure-app"])
     parser.add_argument("--key", required=True, type=Path)
     parser.add_argument("--key-id", required=True)
     parser.add_argument("--issuer", required=True)
     parser.add_argument("--bundle-id", default=BUNDLE_DEFAULT)
-    parser.add_argument("--marketing", required=True)
-    parser.add_argument("--build", required=True)
+    parser.add_argument("--marketing", default="")
+    parser.add_argument("--build", default="")
+    parser.add_argument("--name", default="MacMonitor")
+    parser.add_argument("--sku", default="macmonitor")
+    parser.add_argument("--team-id", default="NWPTRYJ9FL")
     args = parser.parse_args(argv)
+    if args.command == "ensure-app":
+        try:
+            print(json.dumps(ensure_macos_app(
+                args.key, args.key_id, args.issuer, args.bundle_id, args.name, args.sku, args.team_id
+            ), sort_keys=True))
+        except (RuntimeError, ValueError, OSError, KeyError) as error:
+            print(json.dumps({"result": "error", "detail": str(error)}))
+            return 1
+        return 0
     preliminary = classify(args.marketing, args.build, [])
     if preliminary["result"] == "error":
         print(json.dumps(preliminary))
