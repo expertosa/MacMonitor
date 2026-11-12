@@ -167,7 +167,7 @@ public enum RemoteScript {
             "echo \"##EXTRA\";",
             "if [ -f /var/run/reboot-required ]; then echo \"##REBOOT 1\"; else echo \"##REBOOT 0\"; fi;",
             "for S in $SVC; do echo \"##SVC $S $(systemctl is-active $S 2>/dev/null | head -n 1)\"; done;",
-            "if command -v docker >/dev/null 2>&1; then echo \"##DOCKER\"; $T docker ps -a --format {{.State}} 2>/dev/null; fi;",
+            "if command -v docker >/dev/null 2>&1; then $T docker ps -a --format {{.Names}}|{{.State}} 2>/dev/null | while read -r L; do echo \"##DOCKC $L\"; done; fi;",
             "fi;",
             "if [ $((N % \(updatesEvery))) = 0 ]; then",
             "if command -v apt-get >/dev/null 2>&1; then echo \"##UPDATES $($U apt-get -s upgrade 2>/dev/null | grep -c \"^Inst \")\";",
@@ -189,18 +189,23 @@ public enum RemoteScript {
 
     /// Full argument list for /usr/bin/ssh.
     public static func sshArguments(for s: ServerConfig) -> [String] {
+        sshArguments(for: s, remoteCommand: remoteCommand(services: s.services))
+    }
+
+    /// Same options as the monitor session, with a caller-supplied remote command.
+    public static func sshArguments(for s: ServerConfig, remoteCommand: String, connectTimeout: Int = 8) -> [String] {
         var args = ["-T",
                     "-o", "BatchMode=yes",
-                    "-o", "ConnectTimeout=8",
+                    "-o", "ConnectTimeout=\(connectTimeout)",
                     "-o", "ServerAliveInterval=15",
                     "-o", "ServerAliveCountMax=2",
                     "-o", "StrictHostKeyChecking=accept-new",
-                    "-o", "LogLevel=ERROR",            // hide "Permanently added ... to known hosts"
+                    "-o", "LogLevel=ERROR",
                     "-p", String(s.port)]
         if let id = s.identityFile?.trimmingCharacters(in: .whitespaces), !id.isEmpty {
             args += ["-i", (id as NSString).expandingTildeInPath]
         }
-        args += ["--", s.user.isEmpty ? s.host : "\(s.user)@\(s.host)", remoteCommand(services: s.services)]
+        args += ["--", s.user.isEmpty ? s.host : "\(s.user)@\(s.host)", remoteCommand]
         return args
     }
 }
@@ -262,6 +267,7 @@ public struct RawSample: Sendable {
     public var rebootRequired: Bool?
     public var services: [ServiceState] = []
     public var docker: DockerSummary?
+    public var containerNames: [String] = []
     public var pendingUpdates: Int?
     public var arrival: TimeInterval = 0   // local monotonic time the block was completed
     public init() {}
@@ -408,6 +414,12 @@ public final class RemoteStreamParser: @unchecked Sendable {
                     current.services.append(ServiceState(name: name, state: parts.count > 1 ? parts[1] : ""))
                 }
             case "##UPDATES": current.pendingUpdates = Int(value)
+            case "##DOCKC":
+                if let container = RemoteAction.container(from: value) {
+                    current.containerNames.append(container.name)
+                    dockerStates = dockerStates ?? []
+                    dockerStates?.append(container.running ? "running" : "exited")
+                }
             case "##DF": section = "df"
             case "##NET": section = "net"
             case "##NETSTAT": section = "netstat"
@@ -614,6 +626,7 @@ public struct RemoteSnapshot: Equatable, Sendable {
     public var rebootRequired: Bool?
     public var services: [ServiceState] = []
     public var docker: DockerSummary?
+    public var containerNames: [String] = []
     public var pendingUpdates: Int?
 
     public init() {}
@@ -663,6 +676,7 @@ public struct RemoteMetrics {
             s.rebootRequired = r.rebootRequired
             s.services = r.services
             s.docker = r.docker
+            s.containerNames = r.containerNames
         }
         if let n = r.pendingUpdates { s.pendingUpdates = n }
         s.hasData = true

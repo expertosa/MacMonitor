@@ -2,6 +2,15 @@ import AppKit
 import Combine
 import MacMonitorCore
 
+private final class ServerAction: NSObject {
+    let id: UUID
+    let action: RemoteAction
+    init(id: UUID, action: RemoteAction) {
+        self.id = id
+        self.action = action
+    }
+}
+
 @main
 enum MacMonitorMain {
     @MainActor
@@ -244,6 +253,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             add("Open SSH in Terminal", #selector(openSSH(_:)))
             add("Copy SSH Command", #selector(copySSH(_:)))
             detail.addItem(.separator())
+            for name in server.config.services where ServerConfig.isValidServiceName(name) {
+                addAction(RemoteAction.restartService(name), server: server, menu: detail)
+            }
+            for name in server.snapshot.containerNames {
+                addAction(RemoteAction.restartContainer(name), server: server, menu: detail)
+            }
+            addAction(.installUpdates, server: server, menu: detail)
+            detail.addItem(.separator())
             add("Edit…", #selector(editServer(_:)))
             add(server.config.collapsed ? "Expand in Panel" : "Compact in Panel", #selector(toggleCollapsed(_:)))
             if server.hostKeyMismatch { add("Trust New Host Key", #selector(trustHostKey(_:))) }
@@ -268,6 +285,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func server(_ sender: NSMenuItem) -> RemoteSampler? {
         (sender.representedObject as? UUID).flatMap { remotes.server(id: $0) }
+    }
+
+    private func addAction(_ action: RemoteAction, server: RemoteSampler, menu: NSMenu) {
+        let entry = item(action.menuTitle, #selector(runServerAction(_:)))
+        entry.representedObject = ServerAction(id: server.id, action: action)
+        menu.addItem(entry)
+    }
+
+    @objc private func runServerAction(_ sender: NSMenuItem) {
+        guard let target = sender.representedObject as? ServerAction,
+              let server = remotes.server(id: target.id),
+              let shell = target.action.remoteShell() else { return }
+        let alert = NSAlert()
+        alert.messageText = target.action.confirmTitle
+        alert.informativeText = target.action.confirmBody
+        alert.addButton(withTitle: "Run")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        OneShotSSH.run(server.config, command: shell) { output in
+            let done = NSAlert()
+            done.messageText = target.action.confirmTitle
+            done.informativeText = output.isEmpty ? "Finished with no output." : String(output.prefix(4_000))
+            done.addButton(withTitle: "OK")
+            NSApp.activate(ignoringOtherApps: true)
+            done.runModal()
+        }
     }
 
     @objc private func removeServer(_ sender: NSMenuItem) {
