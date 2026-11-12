@@ -2,6 +2,13 @@
 
 All notable changes to MacMonitor. Versions follow the `VERSION` file and `vX.Y.Z` git tags.
 
+## [Unreleased]
+
+### Added
+- **History charts**: CPU, memory, disk and network samples for this Mac and each server,
+  kept as one-minute averages for 24 hours and fifteen-minute averages for 7 days.
+  The panel and each server section show the chart once two buckets exist.
+
 ## [1.1.0]
 
 ### Added
