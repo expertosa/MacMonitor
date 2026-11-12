@@ -132,12 +132,12 @@ jobs:
           xcodebuild -project MacMonitor.xcodeproj -scheme MacMonitorAppStore -configuration Release \
             -destination 'generic/platform=macOS' -archivePath "$RUNNER_TEMP/MacMonitor.xcarchive" \
             MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" $AUTH archive > archive.log 2>&1 \
-            || { grep -E "error:|requires a provisioning|No profiles|No Accounts|certificate" archive.log | head -60; tail -n 40 archive.log; exit 1; }
+            || { set +e +o pipefail; echo "::group::archive log"; grep -nE "error:|fatal error|ARCHIVE FAILED|CodeSign|provision|certificate|No profiles|No Accounts" archive.log | head -80; echo "----- tail -----"; tail -n 80 archive.log; echo "::endgroup::"; exit 1; }
       - name: Upload to App Store Connect
         run: |
           cd Xcode
           xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/MacMonitor.xcarchive" \
             -exportOptionsPlist ExportOptions.plist -exportPath "$RUNNER_TEMP/export" $AUTH > export.log 2>&1 \
-            || { grep -iE "error|invalid|missing" export.log | head -60; tail -n 40 export.log; exit 1; }
+            || { set +e +o pipefail; echo "::group::export log"; grep -niE "error|invalid|missing|provision|certificate" export.log | head -80; echo "----- tail -----"; tail -n 80 export.log; echo "::endgroup::"; exit 1; }
           tail -n 15 export.log
           echo "Uploaded to TestFlight processing. This did not submit the app for App Store review." >> "$GITHUB_STEP_SUMMARY"
