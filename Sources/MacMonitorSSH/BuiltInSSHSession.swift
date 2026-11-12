@@ -44,23 +44,43 @@ public final class BuiltInSSHSession: @unchecked Sendable {
         }
     }
 
+    public struct Jump: Sendable {
+        public var host: String
+        public var port: Int
+        public var knownHostKey: String?
+        public var onNewHostKey: @Sendable (String) -> Void
+        public init(host: String, port: Int, knownHostKey: String?, onNewHostKey: @escaping @Sendable (String) -> Void) {
+            self.host = host
+            self.port = port
+            self.knownHostKey = knownHostKey
+            self.onNewHostKey = onNewHostKey
+        }
+    }
+
     private let host: String
     private let port: Int
     private let credentials: Credentials
     private let knownHostKey: String?
     private let onNewHostKey: @Sendable (String) -> Void
+    private let jump: Jump?
+    private let useAgent: Bool
+    private let sandboxed: Bool
     private let lock = NSLock()
     private var task: Task<Void, Never>?
     private var client: SSHClient?
     private var stopped = false
 
     public init(host: String, port: Int, credentials: Credentials, knownHostKey: String?,
-                onNewHostKey: @escaping @Sendable (String) -> Void) {
+                onNewHostKey: @escaping @Sendable (String) -> Void,
+                jump: Jump? = nil, useAgent: Bool = false, sandboxed: Bool = false) {
         self.host = host
         self.port = port
         self.credentials = credentials
         self.knownHostKey = knownHostKey
         self.onNewHostKey = onNewHostKey
+        self.jump = jump
+        self.useAgent = useAgent
+        self.sandboxed = sandboxed
     }
 
     /// Connects, runs `command`, and streams its output. `onExit` is called exactly once with a
@@ -72,11 +92,32 @@ public final class BuiltInSSHSession: @unchecked Sendable {
         let t = Task { [self] in
             var reason = "Connection closed"
             do {
-                let auth = try Self.authenticationMethod(for: credentials)
+                let auth = try Self.authenticationMethod(for: credentials, useAgent: useAgent, sandboxed: sandboxed)
                 let validator = TOFUHostKeyValidator(expected: knownHostKey, onNew: onNewHostKey)
-                let client = try await SSHClient.connect(host: host, port: port, authenticationMethod: auth,
-                                                         hostKeyValidator: .custom(validator), reconnect: .never,
-                                                         connectTimeout: .seconds(10))
+                let client: SSHClient
+                if let jump {
+                    let bastionValidator = TOFUHostKeyValidator(expected: jump.knownHostKey, onNew: jump.onNewHostKey)
+                    let bastion = try await SSHClient.connect(
+                        host: jump.host, port: jump.port, authenticationMethod: auth,
+                        hostKeyValidator: .custom(bastionValidator), reconnect: .never,
+                        connectTimeout: .seconds(10))
+                    let creds = credentials
+                    let agent = useAgent
+                    let boxed = sandboxed
+                    let settings = SSHClientSettings(
+                        host: host, port: port,
+                        authenticationMethod: {
+                            (try? Self.authenticationMethod(for: creds, useAgent: agent, sandboxed: boxed))
+                                ?? .passwordBased(username: creds.username, password: "")
+                        },
+                        hostKeyValidator: .custom(validator))
+                    client = try await bastion.jump(to: settings)
+                } else {
+                    client = try await SSHClient.connect(
+                        host: host, port: port, authenticationMethod: auth,
+                        hostKeyValidator: .custom(validator), reconnect: .never,
+                        connectTimeout: .seconds(10))
+                }
                 setClient(client)
                 if isStopped { try? await client.close(); return }
                 let stream = try await client.executeCommandStream(command)
@@ -117,12 +158,21 @@ public final class BuiltInSSHSession: @unchecked Sendable {
 
     // MARK: Auth
 
-    static func authenticationMethod(for c: Credentials) throws -> SSHAuthenticationMethod {
+    static func authenticationMethod(for c: Credentials, useAgent: Bool = false, sandboxed: Bool = false) throws -> SSHAuthenticationMethod {
         if let key = c.privateKey?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty {
             return try keyMethod(username: c.username, key: key, passphrase: c.passphrase)
         }
         if let pw = c.password, !pw.isEmpty {
             return .passwordBased(username: c.username, password: pw)
+        }
+        if useAgent {
+            let socket = ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"]
+            guard OpenSSHKeyInfo.agentIsUsable(socketPath: socket, sandboxed: sandboxed), let socket else {
+                throw SessionError.unsupportedKey(sandboxed
+                    ? "ssh-agent isn't available inside the App Sandbox. Choose a key file or a password."
+                    : "ssh-agent isn't available (SSH_AUTH_SOCK is unset).")
+            }
+            return try SSHAgentAuth.method(username: c.username, socket: socket)
         }
         throw SessionError.missingCredentials
     }
@@ -150,9 +200,23 @@ public final class BuiltInSSHSession: @unchecked Sendable {
             } else if type == .rsa {
                 return .rsa(username: username,
                             privateKey: try Insecure.RSA.PrivateKey(sshRsa: key, decryptionKey: decryption))
+            } else if type == .ecdsaP256 || type == .ecdsaP384 || type == .ecdsaP521 {
+                guard let info = OpenSSHKeyInfo.inspect(key), info.scalar != nil else {
+                    throw SessionError.unsupportedKey(
+                        "Passphrase-protected ECDSA keys aren't supported by the built-in client yet. "
+                        + "Remove the passphrase with ssh-keygen -p -f <key>, or use an ed25519 key.")
+                }
+                let scalar = info.scalar!
+                if type == .ecdsaP256 {
+                    return .p256(username: username, privateKey: try P256.Signing.PrivateKey(rawRepresentation: scalar))
+                } else if type == .ecdsaP384 {
+                    return .p384(username: username, privateKey: try P384.Signing.PrivateKey(rawRepresentation: scalar))
+                } else {
+                    return .p521(username: username, privateKey: try P521.Signing.PrivateKey(rawRepresentation: scalar))
+                }
             } else if let other = type {
                 throw SessionError.unsupportedKey(
-                    "\(other) keys aren't supported by the built-in client yet. Use an ed25519 or RSA key.")
+                    "\(other) keys aren't supported by the built-in client yet. Use an ed25519, ECDSA or RSA key.")
             }
             // Detection failed: try both formats before giving up.
             if let k = try? Curve25519.Signing.PrivateKey(sshEd25519: key, decryptionKey: decryption) {
