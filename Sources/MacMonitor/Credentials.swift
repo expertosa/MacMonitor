@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import MacMonitorCore
 
 /// Secrets for the built-in SSH client, kept in the login Keychain (never in user defaults).
 enum ServerSecrets {
