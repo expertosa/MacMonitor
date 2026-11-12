@@ -131,6 +131,8 @@ jobs:
           echo "Version $VERSION build $BUILD" | tee -a "$GITHUB_STEP_SUMMARY"
           xcodebuild -project MacMonitor.xcodeproj -scheme MacMonitorAppStore -configuration Release \
             -destination 'generic/platform=macOS' -archivePath "$RUNNER_TEMP/MacMonitor.xcarchive" \
+            CODE_SIGN_STYLE=Automatic 'CODE_SIGN_IDENTITY=Apple Distribution' \
+            DEVELOPMENT_TEAM=NWPTRYJ9FL \
             MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" $AUTH archive > archive.log 2>&1 \
             || { set +e +o pipefail; echo "::group::archive log"; grep -nE "error:|fatal error|ARCHIVE FAILED|CodeSign|provision|certificate|No profiles|No Accounts" archive.log | head -80; echo "----- tail -----"; tail -n 80 archive.log; echo "::endgroup::"; exit 1; }
       - name: Upload to App Store Connect
