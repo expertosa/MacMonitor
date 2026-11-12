@@ -11,6 +11,9 @@ and your **Linux and Mac servers over plain SSH**, with nothing to install on th
 
 ## Features
 
+English is the default. Arabic is included (`Xcode/Localizable.xcstrings`) and the panel, settings
+and menus lay out right to left when the Mac language is Arabic. The name MacMonitor stays in Latin letters.
+
 **This Mac**
 - Menu bar: choose any of CPU, memory, GPU, network, battery, CPU temperature — as text or with a
   small CPU graph.

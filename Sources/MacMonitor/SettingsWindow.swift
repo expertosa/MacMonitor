@@ -89,6 +89,7 @@ struct SettingsView: View {
         }
         .padding(16)
         .frame(width: 560, height: 480)
+        .environment(\.layoutDirection, InterfaceDirection.isRightToLeft(Locale.preferredLanguages) ? .rightToLeft : .leftToRight)
         .onReceive(NotificationCenter.default.publisher(for: .selectSettingsTab)) { note in
             if let t = note.object as? String { tab = t }
         }
