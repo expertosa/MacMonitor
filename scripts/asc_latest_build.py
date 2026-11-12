@@ -15,9 +15,7 @@ import json
 import subprocess
 import sys
 import tempfile
-import urllib.error
 import urllib.parse
-import urllib.request
 from pathlib import Path
 
 
@@ -180,16 +178,28 @@ def _token(key_path: Path, key_id: str, issuer: str) -> str:
 
 
 def _get(url: str, token: str) -> dict:
-    request = urllib.request.Request(
-        url,
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+    # curl uses the Mac trust store. urllib on the self-hosted runner fails with
+    # CERTIFICATE_VERIFY_FAILED because its Python does not see the system roots.
+    completed = subprocess.run(
+        [
+            "curl", "--silent", "--show-error", "--fail-with-body",
+            "--header", f"Authorization: Bearer {token}",
+            "--header", "Accept: application/json",
+            url,
+        ],
+        capture_output=True,
+        check=False,
     )
+    body = completed.stdout.decode("utf-8", "replace")
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", "replace").strip()[:400]
+        if not detail:
+            detail = body[:400]
+        raise RuntimeError(f"App Store Connect request failed ({detail})")
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            return json.loads(response.read().decode())
-    except urllib.error.HTTPError as error:
-        body = error.read().decode("utf-8", "replace")[:600]
-        raise RuntimeError(f"App Store Connect HTTP {error.code}: {body}") from None
+        return json.loads(body)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"App Store Connect returned non-JSON ({error})") from None
 
 
 def fetch_records(key_path: Path, key_id: str, issuer: str, bundle_id: str) -> tuple[str | None, list[dict]]:
