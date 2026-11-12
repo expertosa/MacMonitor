@@ -47,6 +47,11 @@ final class AlertManager: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    func announce(_ events: [AlertEvent]) {
+        guard Self.available, !events.isEmpty else { return }
+        for event in events { post(event) }
+    }
+
     private func post(_ e: AlertEvent) {
         let content = UNMutableNotificationContent()
         content.title = e.title

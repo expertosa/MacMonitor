@@ -78,6 +78,7 @@ struct SettingsView: View {
     @ObservedObject var updates: UpdateChecker
     #endif
     @State private var tab = SettingsTab.general.rawValue
+    @State private var runnerToken = ""
 
     var body: some View {
         TabView(selection: $tab) {
@@ -88,7 +89,7 @@ struct SettingsView: View {
                 .tag(SettingsTab.servers.rawValue)
         }
         .padding(16)
-        .frame(width: 560, height: 480)
+        .frame(width: 560, height: 560)
         .onReceive(NotificationCenter.default.publisher(for: .selectSettingsTab)) { note in
             if let t = note.object as? String { tab = t }
         }
@@ -122,6 +123,19 @@ struct SettingsView: View {
                     Text("2 seconds").tag(2.0)
                     Text("5 seconds (saves energy)").tag(5.0)
                 }
+            }
+            Section("Runners and disk") {
+                TextField("Watched volume", text: $prefs.watchedVolume, prompt: Text("/Volumes/Data"))
+                Stepper(value: $prefs.volumeFreePercent, in: 1...50, step: 1) {
+                    HStack { Text("Alert when free space is at or below"); Spacer()
+                        Text("\(Int(prefs.volumeFreePercent))%").monospacedDigit() }
+                }
+                TextField("GitHub repository", text: $prefs.runnerRepo, prompt: Text("owner/repo"))
+                SecureField(RunnerSecrets.isSet ? "GitHub token (saved — type to replace)" : "GitHub token (optional)",
+                            text: Binding(get: { runnerToken }, set: { runnerToken = $0; RunnerSecrets.set($0) }))
+                Text("The token stays in the Keychain. Local runner processes are shown without it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             #if !APPSTORE
             Section("Updates") {

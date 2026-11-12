@@ -2,6 +2,12 @@
 
 All notable changes to MacMonitor. Versions follow the `VERSION` file and `vX.Y.Z` git tags.
 
+## [Unreleased]
+
+### Added
+- Status for GitHub Actions self-hosted runners on this Mac, plus an optional GitHub API list.
+- A watched volume (for example `/Volumes/Data`) with alerts when it is missing or low on free space.
+
 ## [1.1.0]
 
 ### Added
