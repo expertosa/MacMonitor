@@ -1,4 +1,5 @@
 import Foundation
+import MacMonitorCore
 import Crypto
 import NIOCore
 import NIOSSH
