@@ -42,10 +42,17 @@ public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
     public var hideDisks: Bool
     /// Connection method. Secrets for .key / .password live in the Keychain, never here.
     public var auth: SSHAuthKind
+    /// Optional bastion. Empty host means a direct connection.
+    public var jumpHost: String
+    public var jumpUser: String
+    public var jumpPort: Int
+    /// Built-in client: use ssh-agent when the sandbox allows it. System ssh already uses the agent.
+    public var useAgent: Bool
 
     public init(id: UUID = UUID(), name: String, host: String, user: String, port: Int = 22,
                 identityFile: String? = nil, services: [String] = [],
-                collapsed: Bool = false, hideDisks: Bool = false, auth: SSHAuthKind = .system) {
+                collapsed: Bool = false, hideDisks: Bool = false, auth: SSHAuthKind = .system,
+                jumpHost: String = "", jumpUser: String = "", jumpPort: Int = 22, useAgent: Bool = false) {
         self.id = id
         self.name = name
         self.host = host
@@ -56,6 +63,10 @@ public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
         self.collapsed = collapsed
         self.hideDisks = hideDisks
         self.auth = auth
+        self.jumpHost = jumpHost
+        self.jumpUser = jumpUser
+        self.jumpPort = jumpPort
+        self.useAgent = useAgent
     }
 
     // Tolerant decoding: anything missing (older saved lists) gets a default.
@@ -72,6 +83,10 @@ public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
         collapsed = try c.decodeIfPresent(Bool.self, forKey: .collapsed) ?? false
         hideDisks = try c.decodeIfPresent(Bool.self, forKey: .hideDisks) ?? false
         auth = (try? c.decodeIfPresent(SSHAuthKind.self, forKey: .auth)) ?? .system
+        jumpHost = try c.decodeIfPresent(String.self, forKey: .jumpHost) ?? ""
+        jumpUser = try c.decodeIfPresent(String.self, forKey: .jumpUser) ?? ""
+        jumpPort = try c.decodeIfPresent(Int.self, forKey: .jumpPort) ?? 22
+        useAgent = try c.decodeIfPresent(Bool.self, forKey: .useAgent) ?? false
     }
 
     /// "user@host:port" for menus.
@@ -103,6 +118,8 @@ public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
     public func connectionDiffers(from other: ServerConfig) -> Bool {
         host != other.host || user != other.user || port != other.port
             || identityFile != other.identityFile || services != other.services || auth != other.auth
+            || jumpHost != other.jumpHost || jumpUser != other.jumpUser || jumpPort != other.jumpPort
+            || useAgent != other.useAgent
     }
 
     /// Unit names are pasted into the remote shell loop, so only allow a safe character set.
@@ -199,6 +216,9 @@ public enum RemoteScript {
                     "-p", String(s.port)]
         if let id = s.identityFile?.trimmingCharacters(in: .whitespaces), !id.isEmpty {
             args += ["-i", (id as NSString).expandingTildeInPath]
+        }
+        if let jump = OpenSSHKeyInfo.proxyJump(user: s.jumpUser, host: s.jumpHost, port: s.jumpPort) {
+            args += ["-J", jump]
         }
         args += ["--", s.user.isEmpty ? s.host : "\(s.user)@\(s.host)", remoteCommand(services: s.services)]
         return args

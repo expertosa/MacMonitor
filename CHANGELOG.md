@@ -2,6 +2,11 @@
 
 All notable changes to MacMonitor. Versions follow the `VERSION` file and `vX.Y.Z` git tags.
 
+## [Unreleased]
+
+### Added
+- Built-in SSH client: ECDSA P-256, P-384 and P-521 keys, ProxyJump, and ssh-agent outside the sandbox.
+
 ## [1.1.0]
 
 ### Added

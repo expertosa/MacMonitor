@@ -46,6 +46,10 @@ private final class EditorForm: NSObject {
     private let userField: NSTextField
     private let portField: NSTextField
     private let servicesField: NSTextField
+    private let jumpHostField: NSTextField
+    private let jumpUserField: NSTextField
+    private let jumpPortField: NSTextField
+    private let agentCheck = NSButton(checkboxWithTitle: "Use ssh-agent (built-in client, outside the sandbox)", target: nil, action: nil)
     private let authPopup = NSPopUpButton()
     // .system
     private let identityField: NSTextField
@@ -76,6 +80,10 @@ private final class EditorForm: NSObject {
         userField = field("user name", e?.user ?? NSUserName())
         portField = field("22", String(e?.port ?? 22))
         servicesField = field("nginx postgresql (optional, Linux)", e?.services.joined(separator: " ") ?? "")
+        jumpHostField = field("bastion (optional)", e?.jumpHost ?? "")
+        jumpUserField = field("jump user (optional)", e?.jumpUser ?? "")
+        jumpPortField = field("22", e.map { String($0.jumpPort) } ?? "22")
+        agentCheck.state = (e?.useAgent ?? false) ? .on : .off
         identityField = field("~/.ssh/id_ed25519 (optional)", e?.identityFile ?? "")
         super.init()
 
@@ -111,6 +119,10 @@ private final class EditorForm: NSObject {
             [NSTextField(labelWithString: "Passphrase:"), passphraseField],
             [NSTextField(labelWithString: "Password:"), passwordField],
             [NSTextField(labelWithString: "Services:"), servicesField],
+            [NSTextField(labelWithString: "Jump host:"), jumpHostField],
+            [NSTextField(labelWithString: "Jump user:"), jumpUserField],
+            [NSTextField(labelWithString: "Jump port:"), jumpPortField],
+            [NSTextField(labelWithString: ""), agentCheck],
         ])
         grid.rowSpacing = 8
         grid.columnSpacing = 8
@@ -205,6 +217,17 @@ private final class EditorForm: NSObject {
         if let bad = services.first(where: { !ServerConfig.isValidServiceName($0) }) {
             return "“\(bad)” isn't a valid service name (letters, digits, - _ . @ : only)."
         }
+        let jumpHost = trim(jumpHostField)
+        if !jumpHost.isEmpty && !ServerConfig.isSafeArgument(jumpHost) {
+            return "The jump host can't start with '-' or contain spaces, quotes or '@'."
+        }
+        let jumpUser = trim(jumpUserField)
+        if !jumpUser.isEmpty && !ServerConfig.isSafeArgument(jumpUser) {
+            return "The jump user can't start with '-' or contain spaces, quotes or '@'."
+        }
+        let jumpPortText = trim(jumpPortField)
+        let jumpPort = jumpPortText.isEmpty ? 22 : (Int(jumpPortText) ?? -1)
+        if !(1...65535).contains(jumpPort) { return "The jump port must be a number from 1 to 65535." }
         switch selectedAuth {
         case .system:
             break
@@ -234,6 +257,10 @@ private final class EditorForm: NSObject {
         cfg.user = trim(userField)
         cfg.port = portText.isEmpty ? 22 : (Int(portText) ?? 22)
         cfg.services = services
+        cfg.jumpHost = trim(jumpHostField)
+        cfg.jumpUser = trim(jumpUserField)
+        cfg.jumpPort = trim(jumpPortField).isEmpty ? 22 : (Int(trim(jumpPortField)) ?? 22)
+        cfg.useAgent = agentCheck.state == .on
         cfg.auth = selectedAuth
         var changed = false
         switch selectedAuth {

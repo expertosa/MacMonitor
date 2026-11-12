@@ -115,7 +115,10 @@ final class BuiltInTransport: RemoteTransport, @unchecked Sendable {
                                     knownHostKey: KnownHostKeys.get(id),
                                     onNewHostKey: { key in
                                         DispatchQueue.main.async { KnownHostKeys.set(key, id) }
-                                    })
+                                    },
+                                    jump: Self.jump(for: config),
+                                    useAgent: config.useAgent,
+                                    sandboxed: Self.sandboxed)
     }
 
     func start(onStdout: @escaping @Sendable (Data) -> Void, onExit: @escaping @Sendable (String) -> Void) {
@@ -130,6 +133,26 @@ final class BuiltInTransport: RemoteTransport, @unchecked Sendable {
     }
 
     func stop() { session.stop() }
+
+    private static var sandboxed: Bool {
+        #if APPSTORE
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    private static func jump(for config: ServerConfig) -> BuiltInSSHSession.Jump? {
+        guard OpenSSHKeyInfo.proxyJump(user: config.jumpUser, host: config.jumpHost, port: config.jumpPort) != nil else {
+            return nil
+        }
+        let id = config.id
+        return BuiltInSSHSession.Jump(
+            host: config.jumpHost,
+            port: config.jumpPort == 0 ? 22 : config.jumpPort,
+            knownHostKey: KnownHostKeys.getJump(id),
+            onNewHostKey: { key in DispatchQueue.main.async { KnownHostKeys.setJump(key, id) } })
+    }
 }
 
 /// Keeps the last ~2 KB of stderr (written from a background queue).

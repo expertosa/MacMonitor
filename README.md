@@ -24,7 +24,8 @@ and your **Linux and Mac servers over plain SSH**, with nothing to install on th
 **Servers**
 - One long-lived SSH session per server runs a tiny POSIX `sh` loop. No agent, no daemon.
 - Log in with the system `ssh` (your keys, ssh-agent, `~/.ssh/config`; direct edition) or the
-  built-in SSH client with a private key file or a password kept in the Keychain (both editions).
+  built-in SSH client with a private key file (ed25519, ECDSA or RSA), a password, or ssh-agent
+  when the sandbox allows it. Secrets stay in the Keychain. ProxyJump is supported on both clients.
 - Linux: CPU, memory, every real filesystem, network, load, uptime, Docker containers, chosen
   systemd services, `reboot-required`, pending apt/dnf updates.
 - macOS servers: CPU, memory, disks, network, load, uptime.
@@ -57,7 +58,8 @@ Center → **Edit Widgets**, then search for *MacMonitor*.
 | Menu bar, panel, widgets, alerts | ✓ | ✓ |
 | SSH servers + Servers widget | ✓ | ✓ (built-in SSH client) |
 | Login via system `ssh` (agent, `~/.ssh/config`, ProxyJump) + config import | ✓ | – (sandbox) |
-| Login with key file / password (built-in client) | ✓ | ✓ |
+| Login with key file / password (built-in client, ECDSA, ProxyJump) | ✓ | ✓ |
+| ssh-agent with the built-in client | ✓ (ed25519) | – (sandbox) |
 | Temperatures, fans, top processes | ✓ | – (blocked by the sandbox) |
 | Update check | GitHub Releases | App Store |
 
@@ -107,13 +109,19 @@ Tests/                   unit tests for MacMonitorCore
 - **System ssh** (direct edition, recommended): runs `/usr/bin/ssh` with your keys, ssh-agent and
   `~/.ssh/config`. It uses `BatchMode=yes`, so key login must work without a prompt (see below).
 - **Private key file**: the built-in client (SwiftNIO SSH via [Citadel](https://github.com/orlandos-nl/Citadel)).
-  Pick an OpenSSH-format ed25519 or RSA key (`~/.ssh/id_ed25519`); passphrase-protected keys work.
+  Pick an OpenSSH-format ed25519, ECDSA (P-256, P-384 or P-521) or RSA key (`~/.ssh/id_ed25519`);
+  passphrase-protected ed25519 and RSA keys work. Unencrypted ECDSA keys work; a passphrase on an
+  ECDSA key has to be removed with `ssh-keygen -p` first.
   The key and passphrase are copied into your login Keychain. PEM keys (`BEGIN RSA PRIVATE KEY`)
-  can be converted in place with `ssh-keygen -p -f <key>`. ECDSA keys aren't supported yet.
+  can be converted in place with `ssh-keygen -p -f <key>`.
 - **Password**: the built-in client with a password stored in the Keychain.
+- **Jump host**: host, user and port in the server editor. System ssh gets `-J`. The built-in client
+  connects to the bastion and opens a direct-tcpip channel. The bastion's host key is remembered separately.
+- **ssh-agent**: system ssh uses your agent as usual. The built-in client can ask `SSH_AUTH_SOCK` to
+  sign with an ed25519 identity when it is not sandboxed. The Mac App Store build cannot see the agent socket.
 
 The built-in client trusts a server's host key on first connect and refuses a different key later
-(**Servers → <name> → Trust New Host Key** after a reinstall). It has no ProxyJump / agent support.
+(**Servers → <name> → Trust New Host Key** after a reinstall). A jump host's key is remembered separately.
 
 For system ssh, set up key-based login first:
 ```bash

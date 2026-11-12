@@ -58,4 +58,14 @@ enum KnownHostKeys {
         all[id.uuidString] = value
         UserDefaults.standard.set(all, forKey: key)
     }
+
+    static func getJump(_ id: UUID) -> String? {
+        (UserDefaults.standard.dictionary(forKey: key) as? [String: String])?[id.uuidString + ".jump"]
+    }
+
+    static func setJump(_ value: String?, _ id: UUID) {
+        var all = (UserDefaults.standard.dictionary(forKey: key) as? [String: String]) ?? [:]
+        all[id.uuidString + ".jump"] = value
+        UserDefaults.standard.set(all, forKey: key)
+    }
 }
