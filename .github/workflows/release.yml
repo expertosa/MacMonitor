@@ -18,6 +18,9 @@ name: Release
 #
 # Marketing version is the semver in VERSION. CFBundleVersion is the short
 # sequential integer CURRENT_PROJECT_VERSION in Xcode/project.yml. Never a timestamp.
+#
+# Runs on the self-hosted Mac runner (labels: self-hosted, macOS). Never a
+# GitHub-hosted runner.
 
 on:
   workflow_dispatch:
@@ -30,7 +33,7 @@ permissions:
 jobs:
   signing-secrets:
     name: Signing secrets
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS]
     steps:
       - name: Require Developer ID and notarization secrets
         env:
@@ -64,12 +67,14 @@ jobs:
   release:
     name: Sign, notarize, package
     needs: signing-secrets
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS]
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      - name: Homebrew on PATH
+        run: echo "/opt/homebrew/bin:/usr/local/bin:/Applications/Xcode.app/Contents/Developer/usr/bin" >> "$GITHUB_PATH"
       - name: Version
         run: |
           VERSION="$(tr -d '[:space:]' < VERSION)"

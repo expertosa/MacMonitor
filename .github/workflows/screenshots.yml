@@ -2,7 +2,7 @@ name: Screenshots
 
 # Re-renders the README images in docs/ from the current code and commits them to the branch.
 # Run it from Actions → Screenshots → Run workflow, or push a commit whose message contains
-# "[screenshots]".
+# "[screenshots]". Runs on the self-hosted Mac runner (labels: self-hosted, macOS).
 on:
   workflow_dispatch:
   push:
@@ -14,12 +14,14 @@ permissions:
 jobs:
   render:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[screenshots]')
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS]
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      - name: Developer tools on PATH
+        run: echo "/opt/homebrew/bin:/usr/local/bin:/Applications/Xcode.app/Contents/Developer/usr/bin" >> "$GITHUB_PATH"
       - name: Build
         run: swift build -c release
       - name: Render

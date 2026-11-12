@@ -10,24 +10,20 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Jobs run only on the self-hosted Mac (labels: self-hosted, macOS).
+# GitHub-hosted runners are not used. Container jobs are unsupported on that
+# runner, so `swift test` runs on the Mac instead of a Swift Linux container.
 jobs:
-  core-tests-linux:
-    name: Core tests (Linux)
-    runs-on: ubuntu-latest
-    container: swift:5.10
-    steps:
-      - uses: actions/checkout@v4
-      - name: swift test
-        run: swift test
-
   macos:
     name: Build & test (macOS)
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS]
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      - name: Homebrew on PATH
+        run: echo "/opt/homebrew/bin:/usr/local/bin:/Applications/Xcode.app/Contents/Developer/usr/bin" >> "$GITHUB_PATH"
       - name: Toolchain
         run: |
           xcodebuild -version
