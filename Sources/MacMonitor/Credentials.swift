@@ -1,4 +1,5 @@
 import Foundation
+import MacMonitorCore
 import Security
 
 /// Secrets for the built-in SSH client, kept in the login Keychain (never in user defaults).
@@ -34,7 +35,7 @@ enum ServerSecrets {
         var add = base
         add[kSecValueData as String] = Data(value.utf8)
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        add[kSecAttrLabel as String] = "MacMonitor SSH \(kind.rawValue)"
+        add[kSecAttrLabel as String] = "\(AppDisplay.name) SSH \(kind.rawValue)"
         return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 

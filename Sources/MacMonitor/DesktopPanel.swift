@@ -34,6 +34,7 @@ final class DesktopPanel: NSPanel {
         hidesOnDeactivate = false
         isMovable = true
         isMovableByWindowBackground = false     // dragging handled by DragOverlayView
+        title = AppDisplay.name
         level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
         collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
 

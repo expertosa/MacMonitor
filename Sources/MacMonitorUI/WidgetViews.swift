@@ -184,7 +184,7 @@ public struct ServersWidgetView: View {
             .foregroundColor(style.palette.label)
             if servers.isEmpty {
                 Spacer(minLength: 0)
-                Text("Add Linux or Mac servers in MacMonitor (Add Server… in the menu bar) to see them here.")
+                Text("Add Linux or Mac servers in \(AppDisplay.name) (Add Server… in the menu bar) to see them here.")
                     .font(style.detailFont)
                     .foregroundColor(style.palette.ink.opacity(0.7))
                     .fixedSize(horizontal: false, vertical: true)

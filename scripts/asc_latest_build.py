@@ -204,6 +204,7 @@ def _get(url: str, token: str) -> dict:
 
 def fetch_records(key_path: Path, key_id: str, issuer: str, bundle_id: str) -> tuple[str | None, list[dict]]:
     token = _token(key_path, key_id, issuer)
+    # Match the app by bundle id. The App Store name ("Monitor CTRL") is not a lookup key.
     apps_url = API + "/v1/apps?" + urllib.parse.urlencode(
         {"filter[bundleId]": bundle_id, "limit": "5", "fields[apps]": "bundleId,name"}
     )

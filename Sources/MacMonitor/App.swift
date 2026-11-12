@@ -63,6 +63,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let button = statusItem.button {
             button.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
             button.title = "CPU --  RAM --"
+            button.toolTip = AppDisplay.name
+            button.setAccessibilityLabel(AppDisplay.name)
             button.imagePosition = .imageLeft
         }
         statusItem.menu = buildMenu()
@@ -128,9 +130,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Menu
 
     private func buildMenu() -> NSMenu {
-        let menu = NSMenu()
+        let menu = NSMenu(title: AppDisplay.name)
         menu.delegate = self
         menu.autoenablesItems = false
+        let brand = NSMenuItem(title: AppDisplay.name, action: nil, keyEquivalent: "")
+        brand.isEnabled = false
+        menu.addItem(brand)
+        menu.addItem(item("About \(AppDisplay.name)", #selector(showAbout)))
+        menu.addItem(.separator())
         showItem = item("Hide Desktop Panel", #selector(toggleVisible))
         lockItem = item("Unlock Position", #selector(toggleLock))
         loginItem = item("Launch at Login", #selector(toggleLogin))
@@ -153,7 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(updateItem)
         #endif
         menu.addItem(.separator())
-        menu.addItem(item("Quit MacMonitor", #selector(quit), key: "q"))
+        menu.addItem(item("Quit \(AppDisplay.name)", #selector(quit), key: "q"))
         return menu
     }
 
@@ -332,6 +339,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func toggleLogin() { LoginItem.set(!LoginItem.isEnabled) }
+
+    @objc private func showAbout() {
+        let alert = NSAlert()
+        alert.messageText = AppDisplay.name
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+        alert.informativeText = version.isEmpty ? "" : "Version \(version) (\(build))"
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
 
     @objc private func quit() { NSApp.terminate(nil) }
 }
