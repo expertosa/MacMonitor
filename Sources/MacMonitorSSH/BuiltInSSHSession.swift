@@ -3,6 +3,7 @@ import Citadel
 import Crypto
 import NIOCore
 import NIOSSH
+import MacMonitorCore
 
 /// In-process SSH client (Citadel on SwiftNIO SSH). Unlike /usr/bin/ssh it works inside the
 /// App Sandbox, so the Mac App Store edition can monitor servers too.
