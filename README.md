@@ -18,6 +18,8 @@ and your **Linux and Mac servers over plain SSH**, with nothing to install on th
   pressure and swap), GPU, battery (charge, power draw, time left), temperatures and fans,
   every local disk, network, and the top 3 processes. Warm, dark or system theme; three sizes;
   pin it to a screen corner or drag it anywhere.
+- 24-hour and 7-day charts (CPU, memory, disk, network) for this Mac and for each server.
+  Samples are averaged to one minute for the day and fifteen minutes for the week.
 - Widgets (Notification Center, and the desktop on macOS 14+): *This Mac* in small, medium and
   large; the large one also lists your servers.
 

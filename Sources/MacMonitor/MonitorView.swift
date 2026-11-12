@@ -67,6 +67,8 @@ struct MonitorView: View {
                                 .frame(height: style.s(40))
                         }
                     }
+                    HistoryChartCard(day: HistoryRecorder.shared.day(HistoryStore.localHostID),
+                                     week: HistoryRecorder.shared.week(HistoryStore.localHostID))
                 }
 
                 if prefs.shows(.memory) {
@@ -245,7 +247,7 @@ struct RemoteSection: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                     } else {
-                        RemoteMetricsView(s: s, hideDisks: server.config.hideDisks)
+                        RemoteMetricsView(s: s, hideDisks: server.config.hideDisks, hostID: server.id.uuidString)
                             .opacity(server.status == .online ? 1 : 0.55)   // stale while reconnecting
                     }
                 }
@@ -261,6 +263,7 @@ struct RemoteMetricsView: View {
     @Environment(\.panelStyle) private var style
     let s: RemoteSnapshot
     let hideDisks: Bool
+    var hostID: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: style.s(9)) {
@@ -280,6 +283,10 @@ struct RemoteMetricsView: View {
             HStack(spacing: 6) {
                 RateChip(arrow: "↓", rate: Fmt.rate(s.netIn))
                 RateChip(arrow: "↑", rate: Fmt.rate(s.netOut))
+            }
+            if !hostID.isEmpty {
+                HistoryChartCard(day: HistoryRecorder.shared.day(hostID),
+                                 week: HistoryRecorder.shared.week(hostID))
             }
             let tags = tagList
             if !tags.isEmpty {

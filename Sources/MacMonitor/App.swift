@@ -69,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         sampler.onTick = { [weak self] s in self?.tick(s) }
         tick(sampler.snapshot)
+        if !snapshotMode { bindHistory() }
         // Redraw the title right away when menu bar settings change.
         prefs.objectWillChange
             .sink { [weak self] _ in DispatchQueue.main.async { self?.updateStatusItem(self?.sampler.snapshot) } }
@@ -98,7 +99,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                      rebootRequired: snap.rebootRequired == true)
         }
         widgetBridge.update(servers: remotes.servers.map(\.widgetServer))
+        HistoryRecorder.shared.recordLocal(s)
         alerts.evaluate(input)
+    }
+
+    /// One subscription set per server list. Rebuilt when servers are added or removed.
+    private var historySubs: Set<AnyCancellable> = []
+
+    private func bindHistory() {
+        remotes.$servers
+            .sink { [weak self] servers in
+                guard let self else { return }
+                self.historySubs.removeAll()
+                for server in servers {
+                    server.$snapshot
+                        .sink { snap in
+                            HistoryRecorder.shared.recordServer(id: server.id, snapshot: snap)
+                        }
+                        .store(in: &self.historySubs)
+                }
+            }
+            .store(in: &subs)
     }
 
     private func updateStatusItem(_ s: Snapshot?) {

@@ -113,6 +113,7 @@ final class DesktopPanel: NSPanel {
         key += [s.sensors.isEmpty ? 0 : 1, s.processes.count]
         #endif
         key += remotes.layoutKey
+        key += HistoryRecorder.shared.layoutKey
         return key
     }
 
