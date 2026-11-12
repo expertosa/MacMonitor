@@ -61,7 +61,7 @@ fi
 STAGE="$(mktemp -d)"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "MacMonitor $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+hdiutil create -volname "Monitor CTRL $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
 rm -rf "$STAGE"
 codesign --force --sign "Developer ID Application" "$DMG" || true
 if [[ $NOTARIZED == 1 ]]; then notarize "$DMG" && xcrun stapler staple "$DMG"; fi

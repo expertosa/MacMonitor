@@ -73,7 +73,7 @@ final class UpdateChecker: ObservableObject {
     private func report(release: Release?, problem: String?) {
         let alert = NSAlert()
         if let release {
-            alert.messageText = "MacMonitor \(release.version) is available"
+            alert.messageText = "\(AppDisplay.name) \(release.version) is available"
             alert.informativeText = "You have \(Self.currentVersion)."
             alert.addButton(withTitle: "Download")
             alert.addButton(withTitle: "Later")
@@ -81,7 +81,7 @@ final class UpdateChecker: ObservableObject {
             alert.messageText = "Couldn't check for updates"
             alert.informativeText = problem
         } else {
-            alert.messageText = "MacMonitor is up to date"
+            alert.messageText = "\(AppDisplay.name) is up to date"
             alert.informativeText = "Version \(Self.currentVersion) is the latest."
         }
         NSApp.activate(ignoringOtherApps: true)

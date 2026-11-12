@@ -167,3 +167,9 @@ final class AlertEngineTests: XCTestCase {
         XCTAssertEqual(s.cpuPercent, 90)
     }
 }
+
+final class AppDisplayTests: XCTestCase {
+    func testUserFacingName() {
+        XCTAssertEqual(AppDisplay.name, "Monitor CTRL")
+    }
+}

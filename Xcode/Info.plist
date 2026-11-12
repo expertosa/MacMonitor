@@ -11,9 +11,9 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>MacMonitor</string>
+	<string>Monitor CTRL</string>
 	<key>CFBundleDisplayName</key>
-	<string>MacMonitor</string>
+	<string>Monitor CTRL</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

@@ -213,10 +213,10 @@ jobs:
           STAGE="$(mktemp -d)"
           cp -R MacMonitor.app "$STAGE/"
           ln -s /Applications "$STAGE/Applications"
-          hdiutil create -volname "MacMonitor $VERSION" -srcfolder "$STAGE" -ov -format UDZO "MacMonitor-$VERSION-$BUILD.dmg"
+          hdiutil create -volname "Monitor CTRL $VERSION" -srcfolder "$STAGE" -ov -format UDZO "MacMonitor-$VERSION-$BUILD.dmg"
           shasum -a 256 MacMonitor-*.dmg MacMonitor-*.zip | tee SHA256SUMS.txt
           {
-            echo "## MacMonitor $VERSION ($BUILD)"
+            echo "## Monitor CTRL $VERSION ($BUILD)"
             echo
             echo "Direct edition for MacBook and other Macs (Apple Silicon and Intel), with the widget extension embedded."
             echo "This Mac and Servers are included at small, medium, and large."
@@ -240,7 +240,7 @@ jobs:
         with:
           tag_name: v${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
-          name: MacMonitor ${{ env.VERSION }} (${{ env.BUILD }})
+          name: Monitor CTRL ${{ env.VERSION }} (${{ env.BUILD }})
           body_path: Xcode/build/out/notes.md
           files: |
             Xcode/build/out/MacMonitor-*.dmg

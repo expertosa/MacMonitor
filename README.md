@@ -1,4 +1,4 @@
-# MacMonitor
+# Monitor CTRL
 
 A light menu bar app, desktop panel and **desktop widgets** that show your Mac's resources —
 and your **Linux and Mac servers over plain SSH**, with nothing to install on them.
@@ -38,7 +38,7 @@ and your **Linux and Mac servers over plain SSH**, with nothing to install on th
 ## Install
 
 **Download** the DMG from [Releases](https://github.com/expertosa/MacMonitor/releases), open it and
-drag MacMonitor to Applications. Or with Homebrew (once the tap is published, see `Casks/`):
+drag Monitor CTRL to Applications. The app file is still `MacMonitor.app`. Or with Homebrew (once the tap is published, see `Casks/`):
 ```bash
 brew install --cask expertosa/tap/macmonitor
 ```
@@ -48,7 +48,7 @@ xattr -dr com.apple.quarantine /Applications/MacMonitor.app
 ```
 
 To add a widget: right-click the desktop → **Edit Widgets…** (macOS 14+) or open Notification
-Center → **Edit Widgets**, then search for *MacMonitor*.
+Center → **Edit Widgets**, then search for *Monitor CTRL*.
 
 ## Editions
 
@@ -102,7 +102,7 @@ Tests/                   unit tests for MacMonitorCore
 
 ## Monitoring servers over SSH
 
-**1. Choose how MacMonitor logs in** (the *Login* field in the server editor):
+**1. Choose how Monitor CTRL logs in** (the *Login* field in the server editor):
 
 - **System ssh** (direct edition, recommended): runs `/usr/bin/ssh` with your keys, ssh-agent and
   `~/.ssh/config`. It uses `BatchMode=yes`, so key login must work without a prompt (see below).

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to MacMonitor. Versions follow the `VERSION` file and `vX.Y.Z` git tags.
+All notable changes to Monitor CTRL. Versions follow the `VERSION` file and `vX.Y.Z` git tags.
 
 ## [1.1.0]
 

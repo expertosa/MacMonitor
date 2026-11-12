@@ -42,7 +42,7 @@ final class AlertManager: NSObject, UNUserNotificationCenterDelegate {
     func sendTest() {
         requestAuthorization { granted in
             guard granted else { return }
-            self.post(AlertEvent(id: "test", title: "MacMonitor alerts are on",
+            self.post(AlertEvent(id: "test", title: "\(AppDisplay.name) alerts are on",
                                  body: "You'll be notified when a threshold is crossed."))
         }
     }

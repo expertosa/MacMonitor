@@ -162,7 +162,7 @@ struct ServersWidget: Widget {
             ServersEntryView(entry: entry)
         }
         .configurationDisplayName("Servers")
-        .description("Status, CPU, memory and disk of the Linux and Mac servers MacMonitor watches over SSH.")
+        .description("Status, CPU, memory and disk of the Linux and Mac servers \(AppDisplay.name) watches over SSH.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }

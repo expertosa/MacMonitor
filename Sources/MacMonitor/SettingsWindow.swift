@@ -22,8 +22,8 @@ enum LoginItem {
             let alert = NSAlert()
             alert.messageText = "Couldn't change Launch at Login"
             alert.informativeText = bundled
-                ? "\(error.localizedDescription)\n\nTry moving MacMonitor.app to /Applications, or add it manually in System Settings → General → Login Items."
-                : "Launch at Login only works when MacMonitor runs from the bundled MacMonitor.app (use build_app.sh)."
+                ? "\(error.localizedDescription)\n\nTry moving \(AppDisplay.name) to /Applications (the file is MacMonitor.app), or add it manually in System Settings → General → Login Items."
+                : "Launch at Login only works when \(AppDisplay.name) runs from the bundled MacMonitor.app (use build_app.sh)."
             alert.alertStyle = .warning
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
@@ -49,7 +49,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private static func makeWindow(_ vc: NSViewController) -> NSWindow {
         let w = NSWindow(contentViewController: vc)
-        w.title = "MacMonitor Settings"
+        w.title = "\(AppDisplay.name) Settings"
         w.styleMask = [.titled, .closable, .miniaturizable]
         w.setContentSize(NSSize(width: 560, height: 480))
         w.isReleasedWhenClosed = false
@@ -237,7 +237,7 @@ struct ServersSettings: View {
     @ObservedObject var remotes: RemoteManager
 
     #if APPSTORE
-    static let emptyHint = "Add a Linux or Mac server. MacMonitor logs in with a private key file or a password, both kept in your Keychain."
+    static let emptyHint = "Add a Linux or Mac server. \(AppDisplay.name) logs in with a private key file or a password, both kept in your Keychain."
     #else
     static let emptyHint = "Add a Linux or Mac server that accepts SSH key login, or import hosts from ~/.ssh/config."
     #endif

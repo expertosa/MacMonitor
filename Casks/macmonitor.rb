@@ -7,7 +7,7 @@ cask "macmonitor" do
   sha256 :no_check # replace with the DMG's sha256 from the GitHub release
 
   url "https://github.com/expertosa/MacMonitor/releases/download/v#{version}/MacMonitor-#{version}.dmg"
-  name "MacMonitor"
+  name "Monitor CTRL"
   desc "Menu bar, desktop panel and widgets for Mac and Linux server resource monitoring"
   homepage "https://github.com/expertosa/MacMonitor"
 

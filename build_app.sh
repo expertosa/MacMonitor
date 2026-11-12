@@ -8,6 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 APP_NAME="MacMonitor"
+DISPLAY_NAME="Monitor CTRL"
 BUNDLE_ID="com.tweetso.macmonitor"
 APP="$PWD/$APP_NAME.app"
 VERSION="$(tr -d '[:space:]' < VERSION 2>/dev/null || echo 1.0)"
@@ -53,9 +54,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleExecutable</key>          <string>$APP_NAME</string>
     <key>CFBundleIdentifier</key>          <string>$BUNDLE_ID</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-    <key>CFBundleName</key>                <string>$APP_NAME</string>
+    <key>CFBundleName</key>                <string>$DISPLAY_NAME</string>
     <key>CFBundleIconFile</key>            <string>AppIcon</string>
-    <key>CFBundleDisplayName</key>         <string>$APP_NAME</string>
+    <key>CFBundleDisplayName</key>         <string>$DISPLAY_NAME</string>
     <key>CFBundlePackageType</key>         <string>APPL</string>
     <key>CFBundleShortVersionString</key>  <string>$VERSION</string>
     <key>CFBundleVersion</key>             <string>$BUILD_NUMBER</string>
