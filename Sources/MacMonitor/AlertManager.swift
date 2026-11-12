@@ -35,15 +35,28 @@ final class AlertManager: NSObject, UNUserNotificationCenterDelegate {
 
     func evaluate(_ input: AlertInput) {
         let events = engine.evaluate(input, settings: prefs.alerts)
-        guard !events.isEmpty, Self.available else { return }
-        for e in events { post(e) }
+        guard !events.isEmpty else { return }
+        if Self.available { for e in events { post(e) } }
+        deliver(events)
     }
 
     func sendTest() {
+        let event = AlertEvent(id: "test", title: "MacMonitor alerts are on",
+                                body: "You'll be notified when a threshold is crossed.")
         requestAuthorization { granted in
-            guard granted else { return }
-            self.post(AlertEvent(id: "test", title: "MacMonitor alerts are on",
-                                 body: "You'll be notified when a threshold is crossed."))
+            if granted { self.post(event) }
+        }
+        deliver([event])
+    }
+
+    private func deliver(_ events: [AlertEvent]) {
+        let requests = AlertChannels.requests(for: events, settings: prefs.alerts, secrets: AlertSecrets.snapshot())
+        for item in requests {
+            var request = URLRequest(url: item.url)
+            request.httpMethod = "POST"
+            request.setValue(item.contentType, forHTTPHeaderField: "Content-Type")
+            request.httpBody = item.body
+            URLSession.shared.dataTask(with: request).resume()
         }
     }
 

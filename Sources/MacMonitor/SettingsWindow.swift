@@ -78,6 +78,10 @@ struct SettingsView: View {
     @ObservedObject var updates: UpdateChecker
     #endif
     @State private var tab = SettingsTab.general.rawValue
+    @State private var telegramToken = ""
+    @State private var telegramChat = ""
+    @State private var slackWebhook = ""
+    @State private var webhookURL = ""
 
     var body: some View {
         TabView(selection: $tab) {
@@ -88,7 +92,7 @@ struct SettingsView: View {
                 .tag(SettingsTab.servers.rawValue)
         }
         .padding(16)
-        .frame(width: 560, height: 480)
+        .frame(width: 560, height: 620)
         .onReceive(NotificationCenter.default.publisher(for: .selectSettingsTab)) { note in
             if let t = note.object as? String { tab = t }
         }
@@ -212,10 +216,40 @@ struct SettingsView: View {
                 percentStepper("Filesystem fuller than", value: $prefs.alerts.serverDiskPercent)
                 Toggle("Watched service stops", isOn: $prefs.alerts.services)
                 Toggle("Reboot required", isOn: $prefs.alerts.reboot)
+                Toggle("Docker container stops", isOn: $prefs.alerts.docker)
+                Toggle("TLS certificate expiry", isOn: $prefs.alerts.certificates)
+                Stepper(value: $prefs.alerts.sslWarnDays, in: 1...90, step: 1) {
+                    HStack { Text("Warn when a certificate expires within"); Spacer()
+                        Text("\(Int(prefs.alerts.sslWarnDays)) days").monospacedDigit() }
+                }
+            }
+            Section("Also send to") {
+                Toggle("Telegram", isOn: $prefs.alerts.telegram)
+                SecureField(AlertSecrets.has(.telegramToken) ? "Bot token (saved — type to replace)" : "Bot token",
+                            text: secret($telegramToken, .telegramToken))
+                TextField(AlertSecrets.has(.telegramChat) ? "Chat id (saved — type to replace)" : "Chat id",
+                          text: secret($telegramChat, .telegramChat))
+                Toggle("Slack", isOn: $prefs.alerts.slack)
+                SecureField(AlertSecrets.has(.slackWebhook) ? "Incoming webhook (saved — type to replace)" : "https://hooks.slack.com/services/…",
+                            text: secret($slackWebhook, .slackWebhook))
+                Toggle("Webhook", isOn: $prefs.alerts.webhook)
+                SecureField(AlertSecrets.has(.webhookURL) ? "HTTPS webhook (saved — type to replace)" : "https://example.com/hook",
+                            text: secret($webhookURL, .webhookURL))
+                Text("Tokens stay in the login Keychain. They are not shown again after you leave this field.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .disabled(false)
+    }
+
+    /// Writes each keystroke to the Keychain and keeps the field local so the saved secret is not reloaded.
+    private func secret(_ text: Binding<String>, _ kind: AlertSecrets.Kind) -> Binding<String> {
+        Binding(get: { text.wrappedValue }, set: {
+            text.wrappedValue = $0
+            AlertSecrets.set($0, kind)
+        })
     }
 
     private func percentStepper(_ title: String, value: Binding<Double>) -> some View {

@@ -2,6 +2,13 @@
 
 All notable changes to MacMonitor. Versions follow the `VERSION` file and `vX.Y.Z` git tags.
 
+## [Unreleased]
+
+### Added
+- Per-server CPU and disk alert thresholds.
+- Alerts when a Docker container stops and when a watched TLS certificate is near expiry.
+- Optional delivery to Telegram, Slack and a generic HTTPS webhook. Tokens stay in the Keychain.
+
 ## [1.1.0]
 
 ### Added

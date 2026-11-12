@@ -14,6 +14,15 @@ public struct AlertSettings: Codable, Equatable, Sendable {
     public var serverCPUMinutes = 10.0
     public var services = true
     public var reboot = true
+    /// A Docker container that was running and then stopped or disappeared.
+    public var docker = true
+    /// TLS certificate on a server's watched host is inside `sslWarnDays`.
+    public var certificates = true
+    public var sslWarnDays = 14.0
+    /// Delivery toggles. Tokens and URLs stay in the Keychain, never in this struct.
+    public var telegram = false
+    public var slack = false
+    public var webhook = false
 
     public init() {}
 
@@ -33,6 +42,12 @@ public struct AlertSettings: Codable, Equatable, Sendable {
         serverCPUMinutes = try c.decodeIfPresent(Double.self, forKey: .serverCPUMinutes) ?? d.serverCPUMinutes
         services = try c.decodeIfPresent(Bool.self, forKey: .services) ?? d.services
         reboot = try c.decodeIfPresent(Bool.self, forKey: .reboot) ?? d.reboot
+        docker = try c.decodeIfPresent(Bool.self, forKey: .docker) ?? d.docker
+        certificates = try c.decodeIfPresent(Bool.self, forKey: .certificates) ?? d.certificates
+        sslWarnDays = try c.decodeIfPresent(Double.self, forKey: .sslWarnDays) ?? d.sslWarnDays
+        telegram = try c.decodeIfPresent(Bool.self, forKey: .telegram) ?? d.telegram
+        slack = try c.decodeIfPresent(Bool.self, forKey: .slack) ?? d.slack
+        webhook = try c.decodeIfPresent(Bool.self, forKey: .webhook) ?? d.webhook
     }
 }
 
@@ -52,10 +67,23 @@ public struct AlertInput: Sendable {
         public var disks: [RemoteDisk]
         public var services: [ServiceState]
         public var rebootRequired: Bool
+        /// Nil uses the global server threshold.
+        public var cpuPercent: Double?
+        public var diskPercent: Double?
+        public var sslWarnDays: Double?
+        public var containers: [DockerContainer]
+        public var certificates: [CertificateStatus]
+        /// True only on the sample where the slow checks (docker, certs) actually ran.
+        public var extrasFresh: Bool
         public init(id: UUID, name: String, offline: Bool, online: Bool, cpu: Double = 0,
-                    disks: [RemoteDisk] = [], services: [ServiceState] = [], rebootRequired: Bool = false) {
+                    disks: [RemoteDisk] = [], services: [ServiceState] = [], rebootRequired: Bool = false,
+                    cpuPercent: Double? = nil, diskPercent: Double? = nil, sslWarnDays: Double? = nil,
+                    containers: [DockerContainer] = [], certificates: [CertificateStatus] = [],
+                    extrasFresh: Bool = false) {
             self.id = id; self.name = name; self.offline = offline; self.online = online; self.cpu = cpu
             self.disks = disks; self.services = services; self.rebootRequired = rebootRequired
+            self.cpuPercent = cpuPercent; self.diskPercent = diskPercent; self.sslWarnDays = sslWarnDays
+            self.containers = containers; self.certificates = certificates; self.extrasFresh = extrasFresh
         }
     }
 
@@ -81,10 +109,14 @@ public struct AlertEvent: Equatable, Sendable {
 public final class AlertEngine {
     private var since: [String: Date] = [:]
     private var fired: Set<String> = []
+    /// Last running container names per server, so a stop is a transition and not a first sighting.
+    private var runningContainers: [String: Set<String>] = [:]
 
     public init() {}
 
-    public func reset() { since.removeAll(); fired.removeAll() }
+    public func reset() {
+        since.removeAll(); fired.removeAll(); runningContainers.removeAll()
+    }
 
     public func evaluate(_ input: AlertInput, settings s: AlertSettings, now: Date = Date()) -> [AlertEvent] {
         guard s.enabled else { reset(); return [] }
@@ -148,17 +180,46 @@ public final class AlertEngine {
             guard srv.online else { continue }
             let cpuKey = p + "cpu"
             let scpu = srv.cpu * 100
-            track(cpuKey, active: over(cpuKey, scpu, s.serverCPUPercent), hold: s.serverCPUMinutes * 60) {
+            let cpuLimit = srv.cpuPercent ?? s.serverCPUPercent
+            track(cpuKey, active: over(cpuKey, scpu, cpuLimit), hold: s.serverCPUMinutes * 60) {
                 AlertEvent(id: cpuKey, title: "High CPU on \(srv.name)",
                            body: String(format: "CPU has been above %.0f%% for %.0f min.",
-                                        s.serverCPUPercent, s.serverCPUMinutes))
+                                        cpuLimit, s.serverCPUMinutes))
             }
+            let diskLimit = srv.diskPercent ?? s.serverDiskPercent
             for d in srv.disks {
                 let key = p + "disk:" + d.mount
                 let pct = d.usedFraction * 100
-                track(key, active: over(key, pct, s.serverDiskPercent), hold: 0) {
+                track(key, active: over(key, pct, diskLimit), hold: 0) {
                     AlertEvent(id: key, title: "\(srv.name): \(d.mount) is almost full",
                                body: String(format: "%.0f%% used.", pct))
+                }
+            }
+            if s.docker, srv.extrasFresh {
+                let id = srv.id.uuidString
+                let running = Set(srv.containers.filter(\.isRunning).map(\.name))
+                if let previous = runningContainers[id] {
+                    for name in previous.subtracting(running).sorted() {
+                        let key = p + "dock:" + name
+                        track(key, active: true, hold: 0) {
+                            AlertEvent(id: key, title: "Container \(name) stopped on \(srv.name)",
+                                       body: "It was running and is no longer running.")
+                        }
+                    }
+                }
+                runningContainers[id] = running
+            }
+            if s.certificates {
+                let warn = srv.sslWarnDays ?? s.sslWarnDays
+                for cert in srv.certificates {
+                    guard let days = cert.daysRemaining else { continue }
+                    let key = p + "cert:" + cert.host
+                    track(key, active: Double(days) <= warn, hold: 0) {
+                        AlertEvent(id: key, title: "Certificate for \(cert.host) expires soon",
+                                   body: days < 0
+                                       ? "The certificate on \(srv.name) expired \(-days) day(s) ago."
+                                       : "The certificate on \(srv.name) expires in \(days) day(s).")
+                    }
                 }
             }
             if s.services {
@@ -185,6 +246,8 @@ public final class AlertEngine {
             since[key] = nil
             fired.remove(key)
         }
+        let live = Set(input.servers.map(\.id.uuidString))
+        for id in runningContainers.keys where !live.contains(id) { runningContainers[id] = nil }
         return events
     }
 }

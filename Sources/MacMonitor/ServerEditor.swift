@@ -46,6 +46,9 @@ private final class EditorForm: NSObject {
     private let userField: NSTextField
     private let portField: NSTextField
     private let servicesField: NSTextField
+    private let certsField: NSTextField
+    private let cpuField: NSTextField
+    private let diskField: NSTextField
     private let authPopup = NSPopUpButton()
     // .system
     private let identityField: NSTextField
@@ -76,6 +79,9 @@ private final class EditorForm: NSObject {
         userField = field("user name", e?.user ?? NSUserName())
         portField = field("22", String(e?.port ?? 22))
         servicesField = field("nginx postgresql (optional, Linux)", e?.services.joined(separator: " ") ?? "")
+        certsField = field("example.com (optional, port 443)", e?.certHosts.joined(separator: " ") ?? "")
+        cpuField = field("blank = global", e?.cpuPercent.map { String(Int($0)) } ?? "")
+        diskField = field("blank = global", e?.diskPercent.map { String(Int($0)) } ?? "")
         identityField = field("~/.ssh/id_ed25519 (optional)", e?.identityFile ?? "")
         super.init()
 
@@ -111,6 +117,9 @@ private final class EditorForm: NSObject {
             [NSTextField(labelWithString: "Passphrase:"), passphraseField],
             [NSTextField(labelWithString: "Password:"), passwordField],
             [NSTextField(labelWithString: "Services:"), servicesField],
+            [NSTextField(labelWithString: "Certificates:"), certsField],
+            [NSTextField(labelWithString: "CPU alert %:"), cpuField],
+            [NSTextField(labelWithString: "Disk alert %:"), diskField],
         ])
         grid.rowSpacing = 8
         grid.columnSpacing = 8
@@ -192,6 +201,23 @@ private final class EditorForm: NSObject {
         trim(servicesField).split(whereSeparator: { $0 == " " || $0 == "," }).map(String.init)
     }
 
+    private var certHosts: [String] {
+        trim(certsField).split(whereSeparator: { $0 == " " || $0 == "," }).map(String.init)
+    }
+
+    private func percent(_ field: NSTextField) -> Double? {
+        let text = trim(field)
+        guard !text.isEmpty else { return nil }
+        return Double(text)
+    }
+
+    private func optionalPercent(_ field: NSTextField) -> String? {
+        let text = trim(field)
+        guard !text.isEmpty else { return nil }
+        guard let n = Double(text), (1...100).contains(n) else { return "Alert percents must be from 1 to 100, or blank." }
+        return nil
+    }
+
     /// Returns a problem description, or nil when the form is valid.
     func validate() -> String? {
         let host = trim(hostField), user = trim(userField), portText = trim(portField)
@@ -205,6 +231,11 @@ private final class EditorForm: NSObject {
         if let bad = services.first(where: { !ServerConfig.isValidServiceName($0) }) {
             return "“\(bad)” isn't a valid service name (letters, digits, - _ . @ : only)."
         }
+        if let bad = certHosts.first(where: { !ServerConfig.isValidCertHost($0) }) {
+            return "“\(bad)” isn't a valid certificate host (letters, digits, dots and hyphens)."
+        }
+        if let bad = optionalPercent(cpuField) { return bad }
+        if let bad = optionalPercent(diskField) { return bad }
         switch selectedAuth {
         case .system:
             break
@@ -234,6 +265,9 @@ private final class EditorForm: NSObject {
         cfg.user = trim(userField)
         cfg.port = portText.isEmpty ? 22 : (Int(portText) ?? 22)
         cfg.services = services
+        cfg.certHosts = certHosts
+        cfg.cpuPercent = percent(cpuField)
+        cfg.diskPercent = percent(diskField)
         cfg.auth = selectedAuth
         var changed = false
         switch selectedAuth {
