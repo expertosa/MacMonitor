@@ -50,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         sampler = Sampler(prefs: prefs)
         alerts = AlertManager(prefs: prefs)
+        RunnerMonitor.shared.start(alerts: alerts)
         // Snapshot debug mode shows a fake 'linux-server' instead of connecting over SSH.
         remotes = RemoteManager(demo: snapshotMode)
         #if !APPSTORE

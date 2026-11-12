@@ -93,6 +93,7 @@ final class Preferences: ObservableObject {
         static let menuItems = "menuBarItems", menuStyle = "menuBarStyle", interval = "updateInterval"
         static let theme = "panelTheme", size = "panelSize", corner = "panelCorner", sections = "panelSections"
         static let alerts = "alertSettings", checkUpdates = "checkForUpdates"
+        static let volume = "watchedVolume", volumeFree = "volumeFreePercent", runnerRepo = "runnerRepo"
     }
 
     @Published var menuBarItems: Set<MenuBarItem> { didSet { d.set(menuBarItems.map(\.rawValue).sorted(), forKey: Key.menuItems) } }
@@ -107,6 +108,12 @@ final class Preferences: ObservableObject {
         didSet { if let data = try? JSONEncoder().encode(alerts) { d.set(data, forKey: Key.alerts) } }
     }
     @Published var checkForUpdates: Bool { didSet { d.set(checkForUpdates, forKey: Key.checkUpdates) } }
+    /// Absolute path watched for free space. Empty disables the watch.
+    @Published var watchedVolume: String { didSet { d.set(watchedVolume, forKey: Key.volume) } }
+    /// Alert when free space is at or below this percent.
+    @Published var volumeFreePercent: Double { didSet { d.set(volumeFreePercent, forKey: Key.volumeFree) } }
+    /// `owner/repo` for the optional GitHub Actions runners list. The token is in the Keychain.
+    @Published var runnerRepo: String { didSet { d.set(runnerRepo, forKey: Key.runnerRepo) } }
 
     private init() {
         let items = (d.stringArray(forKey: Key.menuItems) ?? ["cpu", "ram"]).compactMap(MenuBarItem.init)
@@ -128,6 +135,10 @@ final class Preferences: ObservableObject {
             alerts = AlertSettings()
         }
         checkForUpdates = d.object(forKey: Key.checkUpdates) as? Bool ?? true
+        watchedVolume = d.string(forKey: Key.volume) ?? ""
+        let free = d.double(forKey: Key.volumeFree)
+        volumeFreePercent = (1...50).contains(free) ? free : 10
+        runnerRepo = d.string(forKey: Key.runnerRepo) ?? ""
     }
 
     func shows(_ s: PanelSection) -> Bool {

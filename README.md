@@ -30,6 +30,9 @@ and your **Linux and Mac servers over plain SSH**, with nothing to install on th
 - macOS servers: CPU, memory, disks, network, load, uptime.
 - *Servers* widget, per-server compact mode, hide filesystems, reorder, edit.
 - Import hosts from `~/.ssh/config`; "Open SSH in Terminal"; "Copy SSH Command".
+- GitHub Actions self-hosted runners: local `Runner.Listener` / `Runner.Worker` on this Mac, and
+  optionally the repository's runner list (a fine-grained or classic token kept in the Keychain).
+- A chosen volume, such as `/Volumes/Data`, with an alert when it is unmounted or low on space.
 
 **Alerts** (macOS notifications, off by default)
 - Sustained high CPU, critical memory pressure, disk almost full, low battery.

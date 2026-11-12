@@ -144,6 +144,7 @@ struct MonitorView: View {
             ForEach(remotes.servers) { server in
                 RemoteSection(server: server)
             }
+            RunnerStatusSection()
         }
         .fixedSize(horizontal: false, vertical: true)
         .frame(width: style.s(Theme.panelWidth), alignment: .top)
@@ -371,4 +372,39 @@ struct ServerHeader: View {
         case .error: return .error
         }
     }
+}
+
+struct RunnerStatusSection: View {
+    @ObservedObject private var monitor = RunnerMonitor.shared
+    @Environment(\.panelStyle) private var style
+
+    var body: some View {
+        if monitor.runners.isEmpty && monitor.volume == nil { EmptyView() } else {
+            VStack(alignment: .leading, spacing: style.s(6)) {
+                Rectangle().fill(style.palette.divider).frame(height: 0.5)
+                if !monitor.runners.isEmpty {
+                    SectionRow(icon: "desktopcomputer", title: "Runners", value: nil)
+                    ForEach(monitor.runners) { runner in
+                        HStack {
+                            Text(runner.name).lineLimit(1)
+                            Spacer(minLength: 4)
+                            Text(runner.status.rawValue)
+                        }
+                        .font(style.detailFont)
+                        .foregroundColor(style.palette.ink.opacity(0.8))
+                        .padding(.leading, style.s(20))
+                    }
+                }
+                if let volume = monitor.volume {
+                    let free = volume.freeFraction.map { Fmt.pct($0) + " free" }
+                    SectionRow(icon: "externaldrive",
+                               title: (volume.path as NSString).lastPathComponent,
+                               value: volume.mounted ? (free ?? "mounted") : "not mounted")
+                }
+            }
+            .padding(.horizontal, style.s(Theme.hPadding))
+            .padding(.bottom, style.s(12))
+        }
+    }
+}
 }
