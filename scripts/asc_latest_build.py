@@ -177,29 +177,97 @@ def _token(key_path: Path, key_id: str, issuer: str) -> str:
     return f"{header}.{payload}.{signature}"
 
 
-def _get(url: str, token: str) -> dict:
-    # curl uses the Mac trust store. urllib on the self-hosted runner fails with
-    # CERTIFICATE_VERIFY_FAILED because its Python does not see the system roots.
-    completed = subprocess.run(
-        [
-            "curl", "--silent", "--show-error", "--fail-with-body",
-            "--header", f"Authorization: Bearer {token}",
-            "--header", "Accept: application/json",
-            url,
-        ],
-        capture_output=True,
-        check=False,
-    )
+def _request(method: str, url: str, token: str, payload: dict | None = None) -> dict:
+    command = [
+        "curl", "--silent", "--show-error", "--fail-with-body",
+        "-X", method,
+        "--header", f"Authorization: Bearer {token}",
+        "--header", "Accept: application/json",
+    ]
+    if payload is not None:
+        command += ["--header", "Content-Type: application/json", "--data", json.dumps(payload)]
+    command.append(url)
+    completed = subprocess.run(command, capture_output=True, check=False)
     body = completed.stdout.decode("utf-8", "replace")
     if completed.returncode != 0:
-        detail = completed.stderr.decode("utf-8", "replace").strip()[:400]
-        if not detail:
-            detail = body[:400]
-        raise RuntimeError(f"App Store Connect request failed ({detail})")
+        detail = body[:500] or completed.stderr.decode("utf-8", "replace").strip()[:400]
+        raise RuntimeError(f"App Store Connect {method} failed ({detail})")
+    if not body.strip():
+        return {}
     try:
         return json.loads(body)
     except json.JSONDecodeError as error:
         raise RuntimeError(f"App Store Connect returned non-JSON ({error})") from None
+
+
+def _get(url: str, token: str) -> dict:
+    # curl uses the Mac trust store. urllib on the self-hosted runner fails with
+    # CERTIFICATE_VERIFY_FAILED because its Python does not see the system roots.
+    return _request("GET", url, token)
+
+
+# App Store Connect display name. Lookup is by bundle id and Apple ID, never by this string.
+APP_DISPLAY_NAME = "MacMonitor by Tweetso"
+APP_APPLE_ID = "6834033069"
+
+
+def select_existing_app(apps: list[dict], bundle_id: str, apple_id: str) -> dict | None:
+    """Pick the existing app. Returns None when the list has no match. Never creates an app."""
+    matched: list[dict] = []
+    for app in apps:
+        attributes = app.get("attributes") or {}
+        found_bundle = attributes.get("bundleId")
+        if found_bundle and found_bundle != bundle_id:
+            continue
+        matched.append(app)
+    if apple_id:
+        by_id = [app for app in matched if str(app.get("id")) == str(apple_id)]
+        if matched and not by_id:
+            found = ", ".join(str(app.get("id")) for app in matched)
+            raise RuntimeError(
+                f"Bundle {bundle_id} belongs to app {found}, not {apple_id}. Refusing to upload."
+            )
+        matched = by_id
+    if not matched:
+        return None
+    if len(matched) > 1:
+        found = ", ".join(str(app.get("id")) for app in matched)
+        raise RuntimeError(f"More than one App Store Connect app for bundle {bundle_id}: {found}")
+    return matched[0]
+
+
+def lookup_macos_app(key_path: Path, key_id: str, issuer: str, bundle_id: str, apple_id: str) -> dict:
+    """Return the existing App Store Connect app. Does not POST /v1/apps or /v1/bundleIds."""
+    token = _token(key_path, key_id, issuer)
+    apps_url = API + "/v1/apps?" + urllib.parse.urlencode(
+        {"filter[bundleId]": bundle_id, "limit": "5", "fields[apps]": "bundleId,name"}
+    )
+    apps = _request("GET", apps_url, token).get("data") or []
+    chosen = select_existing_app(apps, bundle_id, apple_id)
+    if chosen is None and apple_id:
+        one_url = API + "/v1/apps/" + urllib.parse.quote(str(apple_id), safe="") + "?" + urllib.parse.urlencode(
+            {"fields[apps]": "bundleId,name"}
+        )
+        data = _request("GET", one_url, token).get("data") or {}
+        if data:
+            attributes = data.get("attributes") or {}
+            if attributes.get("bundleId") != bundle_id:
+                raise RuntimeError(
+                    f"App {apple_id} has bundle {attributes.get('bundleId')!r}, not {bundle_id}. Refusing to upload."
+                )
+            chosen = data
+    if chosen is None:
+        raise RuntimeError(
+            f"No App Store Connect app for bundle {bundle_id}. "
+            "The upload looks up the existing app and does not call POST /v1/apps."
+        )
+    name = (chosen.get("attributes") or {}).get("name") or ""
+    return {
+        "created": False,
+        "appleId": str(chosen["id"]),
+        "bundleId": bundle_id,
+        "name": name,
+    }
 
 
 def fetch_records(key_path: Path, key_id: str, issuer: str, bundle_id: str) -> tuple[str | None, list[dict]]:
@@ -268,6 +336,25 @@ def self_test() -> None:
     ios = [{"marketing": "1.1.0", "build": "9", "processingState": "VALID", "platform": "IOS"}]
     assert classify("1.1.0", "2", ios)["result"] == "upload"
 
+    existing = {
+        "id": APP_APPLE_ID,
+        "attributes": {"bundleId": BUNDLE_DEFAULT, "name": APP_DISPLAY_NAME},
+    }
+    assert select_existing_app([existing], BUNDLE_DEFAULT, APP_APPLE_ID)["id"] == APP_APPLE_ID
+    assert select_existing_app([existing], BUNDLE_DEFAULT, "")["id"] == APP_APPLE_ID
+    assert select_existing_app([], BUNDLE_DEFAULT, APP_APPLE_ID) is None
+    renamed = {
+        "id": APP_APPLE_ID,
+        "attributes": {"bundleId": BUNDLE_DEFAULT, "name": "MacMonitor"},
+    }
+    assert select_existing_app([renamed], BUNDLE_DEFAULT, APP_APPLE_ID)["attributes"]["name"] == "MacMonitor"
+    try:
+        select_existing_app([existing], BUNDLE_DEFAULT, "1")
+    except RuntimeError as error:
+        assert "not 1" in str(error)
+    else:
+        raise SystemExit("a different Apple ID must be rejected")
+
     with tempfile.TemporaryDirectory() as directory:
         key = Path(directory) / "key.pem"
         public = Path(directory) / "key.pub"
@@ -300,14 +387,43 @@ def main(argv: list[str]) -> int:
         self_test()
         return 0
     parser = argparse.ArgumentParser(description="Check the latest App Store Connect build")
-    parser.add_argument("command", choices=["check"])
+    parser.add_argument("command", choices=["check", "lookup-app", "status"])
     parser.add_argument("--key", required=True, type=Path)
     parser.add_argument("--key-id", required=True)
     parser.add_argument("--issuer", required=True)
     parser.add_argument("--bundle-id", default=BUNDLE_DEFAULT)
-    parser.add_argument("--marketing", required=True)
-    parser.add_argument("--build", required=True)
+    parser.add_argument("--marketing", default="")
+    parser.add_argument("--build", default="")
+    parser.add_argument("--apple-id", default=APP_APPLE_ID)
     args = parser.parse_args(argv)
+    if args.command == "lookup-app":
+        try:
+            print(json.dumps(lookup_macos_app(
+                args.key, args.key_id, args.issuer, args.bundle_id, args.apple_id
+            ), sort_keys=True))
+        except (RuntimeError, ValueError, OSError, KeyError) as error:
+            print(json.dumps({"result": "error", "detail": str(error)}))
+            return 1
+        return 0
+    if args.command == "status":
+        try:
+            app_id, records = fetch_records(args.key, args.key_id, args.issuer, args.bundle_id)
+        except (RuntimeError, ValueError, OSError) as error:
+            print(json.dumps({"result": "error", "detail": str(error)}))
+            return 1
+        match = [
+            record for record in records
+            if record.get("marketing") == args.marketing and str(record.get("build") or "") == args.build
+        ]
+        state = match[0]["processingState"] if match else "NOT_LISTED"
+        print(json.dumps({
+            "appleAppId": app_id,
+            "marketing": args.marketing,
+            "build": args.build,
+            "processingState": state,
+            "platform": match[0].get("platform") if match else "",
+        }, sort_keys=True))
+        return 0
     preliminary = classify(args.marketing, args.build, [])
     if preliminary["result"] == "error":
         print(json.dumps(preliminary))
