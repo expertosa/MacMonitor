@@ -152,6 +152,7 @@ struct MonitorView: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
         .environment(\.panelStyle, style)
         .environment(\.colorScheme, style.palette.isDark ? .dark : .light)
+        .environment(\.layoutDirection, InterfaceDirection.isRightToLeft(Locale.preferredLanguages) ? .rightToLeft : .leftToRight)
     }
 
     private var historyLabel: String {

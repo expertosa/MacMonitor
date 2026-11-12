@@ -2,6 +2,12 @@
 
 All notable changes to MacMonitor. Versions follow the `VERSION` file and `vX.Y.Z` git tags.
 
+## [Unreleased]
+
+### Added
+- Arabic localization with a String Catalog. English stays the default, the layout is right to left
+  for Arabic, and the name MacMonitor is unchanged.
+
 ## [1.1.0]
 
 ### Added

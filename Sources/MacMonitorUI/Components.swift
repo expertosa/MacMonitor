@@ -66,7 +66,7 @@ public struct SectionRow: View {
             Image(systemName: icon)
                 .font(style.font(10.5, rounded: false))
                 .frame(width: style.s(15))
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .font(style.labelFont)
                 .lineLimit(1)
                 .truncationMode(.middle)

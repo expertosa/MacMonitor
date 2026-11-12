@@ -13,6 +13,7 @@
 name: MacMonitor
 options:
   bundleIdPrefix: com.tweetso
+  developmentLanguage: en
   deploymentTarget:
     macOS: "13.0"
   createIntermediateGroups: true
@@ -21,6 +22,7 @@ packages:
     path: ..
 settings:
   base:
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
     DEVELOPMENT_TEAM: NWPTRYJ9FL
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "5.0"
@@ -40,6 +42,8 @@ targetTemplates:
           - "*.swift"
       - path: Assets.xcassets
       - path: PrivacyInfo.xcprivacy
+        buildPhase: resources
+      - path: Localizable.xcstrings
         buildPhase: resources
     dependencies:
       - package: MacMonitorKit
@@ -86,6 +90,8 @@ targets:
         includes:
           - "*.swift"
       - path: ../Widget/PrivacyInfo.xcprivacy
+        buildPhase: resources
+      - path: Localizable.xcstrings
         buildPhase: resources
     dependencies:
       - package: MacMonitorKit

@@ -141,8 +141,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         #if !APPSTORE
         menu.addItem(item("Import from ~/.ssh/config…", #selector(importServers)))
         #endif
-        serversItem = NSMenuItem(title: "Servers", action: nil, keyEquivalent: "")
-        serversItem.submenu = NSMenu(title: "Servers")
+        serversItem = NSMenuItem(title: localizedUI("Servers"), action: nil, keyEquivalent: "")
+        serversItem.submenu = NSMenu(title: localizedUI("Servers"))
         menu.addItem(serversItem)
         menu.addItem(.separator())
         menu.addItem(item("Open Activity Monitor", #selector(openActivityMonitor)))
@@ -158,14 +158,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
-        let i = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        let i = NSMenuItem(title: localizedUI(title), action: action, keyEquivalent: key)
         i.target = self
         return i
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
-        showItem.title = panel.isVisible ? "Hide Desktop Panel" : "Show Desktop Panel"
-        lockItem.title = panel.locked ? "Unlock Position" : "Lock Position"
+        showItem.title = localizedUI(panel.isVisible ? "Hide Desktop Panel" : "Show Desktop Panel")
+        lockItem.title = localizedUI(panel.locked ? "Unlock Position" : "Lock Position")
         lockItem.isEnabled = panel.isVisible
         loginItem.state = LoginItem.isEnabled ? .on : .off
         rebuildServersMenu()
