@@ -30,6 +30,9 @@ and your **Linux and Mac servers over plain SSH**, with nothing to install on th
 - macOS servers: CPU, memory, disks, network, load, uptime.
 - *Servers* widget, per-server compact mode, hide filesystems, reorder, edit.
 - Import hosts from `~/.ssh/config`; "Open SSH in Terminal"; "Copy SSH Command".
+- From the server menu: restart a watched systemd service, restart a Docker container, or install
+  apt/dnf updates. Each action asks for confirmation and shows the command output. `sudo -n` is
+  used, so passwordless sudo has to be set up on the server.
 
 **Alerts** (macOS notifications, off by default)
 - Sustained high CPU, critical memory pressure, disk almost full, low battery.

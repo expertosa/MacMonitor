@@ -2,6 +2,12 @@
 
 All notable changes to MacMonitor. Versions follow the `VERSION` file and `vX.Y.Z` git tags.
 
+## [Unreleased]
+
+### Added
+- Server menu actions: restart a watched systemd service, restart a Docker container, or install
+  package updates. Each one asks for confirmation and shows the output.
+
 ## [1.1.0]
 
 ### Added
