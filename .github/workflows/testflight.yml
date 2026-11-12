@@ -20,6 +20,9 @@ name: TestFlight
 #   ASC_KEY_P8         base64 of the downloaded AuthKey_XXXX.p8  (base64 -i AuthKey_XXXX.p8 | pbcopy)
 # The key needs the Admin role so Xcode can create the cloud-managed distribution certificate
 # and provisioning profiles (app + widget) automatically.
+#
+# Runs on the self-hosted Mac runner (labels: self-hosted, macOS). Never a
+# GitHub-hosted runner.
 
 on:
   push:
@@ -35,7 +38,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/testflight-') ||
       contains(github.event.head_commit.message, '[testflight]')
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS]
     defaults:
       run:
         shell: bash
@@ -55,6 +58,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Homebrew on PATH
+        run: echo "/opt/homebrew/bin:/usr/local/bin:/Applications/Xcode.app/Contents/Developer/usr/bin" >> "$GITHUB_PATH"
       - name: Tests
         run: swift test
       - name: Install XcodeGen
