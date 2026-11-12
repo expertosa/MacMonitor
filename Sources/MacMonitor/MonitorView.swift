@@ -407,4 +407,3 @@ struct RunnerStatusSection: View {
         }
     }
 }
-}

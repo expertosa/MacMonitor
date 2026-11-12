@@ -119,5 +119,5 @@ enum RunnerSecrets {
         return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 
-    static var isSet: Bool { get() != nil }
+    static var isSet: Bool { Self.get() != nil }
 }
