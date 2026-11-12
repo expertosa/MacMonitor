@@ -129,6 +129,19 @@ jobs:
             exit 1
           fi
           echo "Version $VERSION build $BUILD" | tee -a "$GITHUB_STEP_SUMMARY"
+          # codesign returns errSecInternalComponent when the runner cannot use
+          # the private key. Update the login keychain ACL without printing secrets.
+          login_kc="$HOME/Library/Keychains/login.keychain-db"
+          if [[ ! -f "$login_kc" ]]; then
+            login_kc="$HOME/Library/Keychains/login.keychain"
+          fi
+          echo "Signing keychain: $login_kc"
+          security list-keychains -d user -s "$login_kc"
+          security default-keychain -d user -s "$login_kc"
+          security set-keychain-settings -lut 21600 "$login_kc" || true
+          security find-identity -v -p codesigning "$login_kc" | sed -E 's/^[ ]*[0-9]+\) [0-9A-F]+ //'
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s "$login_kc" </dev/null \
+            || echo "::warning::Could not update the key partition list. codesign may return errSecInternalComponent."
           # Do not pass CODE_SIGN_IDENTITY or a provisioning profile. Those settings
           # apply to every target, including SwiftPM packages, and conflict with
           # automatic development signing. exportArchive re-signs for the App Store.
@@ -136,7 +149,7 @@ jobs:
             -destination 'generic/platform=macOS' -archivePath "$RUNNER_TEMP/MacMonitor.xcarchive" \
             CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=NWPTRYJ9FL \
             MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" $AUTH archive > archive.log 2>&1 \
-            || { set +e +o pipefail; echo "::group::archive log"; grep -nE "error:|fatal error|ARCHIVE FAILED|CodeSign|provision|certificate|No profiles|No Accounts" archive.log | head -80; echo "----- tail -----"; tail -n 80 archive.log; echo "::endgroup::"; exit 1; }
+            || { set +e +o pipefail; echo "::group::archive log"; grep -nE "error:|fatal error|ARCHIVE FAILED|CodeSign|errSec|provision|certificate|No profiles|No Accounts" archive.log | head -80; echo "----- tail -----"; tail -n 80 archive.log; echo "::endgroup::"; exit 1; }
       - name: Upload to App Store Connect
         run: |
           cd Xcode
