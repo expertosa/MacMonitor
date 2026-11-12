@@ -36,6 +36,12 @@ public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
     public var identityFile: String?
     /// systemd units whose state is shown (Linux only), e.g. ["nginx", "postgresql"].
     public var services: [String]
+    /// Host names whose TLS certificate on port 443 is checked (Linux or macOS servers).
+    public var certHosts: [String]
+    /// Optional overrides. Nil uses the global alert threshold.
+    public var cpuPercent: Double?
+    public var diskPercent: Double?
+    public var sslWarnDays: Double?
     /// Show only the header row (status, CPU, memory) in the desktop panel.
     public var collapsed: Bool
     /// Hide the per-filesystem bars in the desktop panel.
@@ -45,7 +51,9 @@ public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
 
     public init(id: UUID = UUID(), name: String, host: String, user: String, port: Int = 22,
                 identityFile: String? = nil, services: [String] = [],
-                collapsed: Bool = false, hideDisks: Bool = false, auth: SSHAuthKind = .system) {
+                collapsed: Bool = false, hideDisks: Bool = false, auth: SSHAuthKind = .system,
+                certHosts: [String] = [], cpuPercent: Double? = nil, diskPercent: Double? = nil,
+                sslWarnDays: Double? = nil) {
         self.id = id
         self.name = name
         self.host = host
@@ -56,6 +64,10 @@ public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
         self.collapsed = collapsed
         self.hideDisks = hideDisks
         self.auth = auth
+        self.certHosts = certHosts.filter(ServerConfig.isValidCertHost)
+        self.cpuPercent = cpuPercent
+        self.diskPercent = diskPercent
+        self.sslWarnDays = sslWarnDays
     }
 
     // Tolerant decoding: anything missing (older saved lists) gets a default.
@@ -72,6 +84,11 @@ public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
         collapsed = try c.decodeIfPresent(Bool.self, forKey: .collapsed) ?? false
         hideDisks = try c.decodeIfPresent(Bool.self, forKey: .hideDisks) ?? false
         auth = (try? c.decodeIfPresent(SSHAuthKind.self, forKey: .auth)) ?? .system
+        certHosts = (try c.decodeIfPresent([String].self, forKey: .certHosts) ?? [])
+            .filter(ServerConfig.isValidCertHost)
+        cpuPercent = try c.decodeIfPresent(Double.self, forKey: .cpuPercent)
+        diskPercent = try c.decodeIfPresent(Double.self, forKey: .diskPercent)
+        sslWarnDays = try c.decodeIfPresent(Double.self, forKey: .sslWarnDays)
     }
 
     /// "user@host:port" for menus.
@@ -103,6 +120,7 @@ public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
     public func connectionDiffers(from other: ServerConfig) -> Bool {
         host != other.host || user != other.user || port != other.port
             || identityFile != other.identityFile || services != other.services || auth != other.auth
+            || certHosts != other.certHosts
     }
 
     /// Unit names are pasted into the remote shell loop, so only allow a safe character set.
@@ -112,6 +130,26 @@ public struct ServerConfig: Codable, Identifiable, Equatable, Sendable {
             (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9")
                 || c == "-" || c == "_" || c == "." || c == "@" || c == ":"
         }
+    }
+
+    /// Host names pasted into `openssl s_client -connect`. Letters, digits, dots and hyphens only.
+    public static func isValidCertHost(_ s: String) -> Bool {
+        guard !s.isEmpty, s.count <= 253, !s.hasPrefix("-"), !s.hasPrefix(".") else { return false }
+        return s.unicodeScalars.allSatisfy { c in
+            (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c == "." || c == "-"
+        }
+    }
+
+    /// Docker container names we will pass back to `docker restart`.
+    public static func isValidContainerName(_ s: String) -> Bool {
+        guard (1...128).contains(s.count) else { return false }
+        let scalars = Array(s.unicodeScalars)
+        guard let first = scalars.first else { return false }
+        let alnum = { (c: Unicode.Scalar) in
+            (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9")
+        }
+        guard alnum(first) else { return false }
+        return scalars.allSatisfy { alnum($0) || $0 == "." || $0 == "_" || $0 == "-" }
     }
 
     /// Validation for host / user fields typed by the user (they become ssh arguments).
@@ -132,12 +170,14 @@ public enum RemoteScript {
     /// and no backslashes, so wrapping it in '...' is safe under sh, bash, zsh, fish and csh
     /// login shells. Prints one ##BEGIN ... ##END block every 2 s.
     /// Linux servers report /proc data; macOS servers report sysctl / vm_stat / netstat / top.
-    public static func script(services: [String] = []) -> String {
+    public static func script(services: [String] = [], certHosts: [String] = []) -> String {
         let svc = services.filter(ServerConfig.isValidServiceName).joined(separator: " ")
-        return [
+        let certs = certHosts.filter(ServerConfig.isValidCertHost).joined(separator: " ")
+        var lines = [
             "echo \"##HOST $(hostname 2>/dev/null || uname -n)\";",
             "OS=$(uname -s 2>/dev/null); echo \"##OS $OS\";",
             "SVC=\"\(svc)\";",
+            "CERTS=\"\(certs)\";",
             "T=; command -v timeout >/dev/null 2>&1 && T=\"timeout 5\";",
             "U=; command -v timeout >/dev/null 2>&1 && U=\"timeout 60\";",
             "if df -P -B1 -x tmpfs / >/dev/null 2>&1; then M=1; else M=1024; fi;",
@@ -167,7 +207,7 @@ public enum RemoteScript {
             "echo \"##EXTRA\";",
             "if [ -f /var/run/reboot-required ]; then echo \"##REBOOT 1\"; else echo \"##REBOOT 0\"; fi;",
             "for S in $SVC; do echo \"##SVC $S $(systemctl is-active $S 2>/dev/null | head -n 1)\"; done;",
-            "if command -v docker >/dev/null 2>&1; then echo \"##DOCKER\"; $T docker ps -a --format {{.State}} 2>/dev/null; fi;",
+            "if command -v docker >/dev/null 2>&1; then $T docker ps -a --format {{.Names}}|{{.State}} 2>/dev/null | while read -r L; do echo \"##DOCKC $L\"; done; fi;",
             "fi;",
             "if [ $((N % \(updatesEvery))) = 0 ]; then",
             "if command -v apt-get >/dev/null 2>&1; then echo \"##UPDATES $($U apt-get -s upgrade 2>/dev/null | grep -c \"^Inst \")\";",
@@ -175,16 +215,19 @@ public enum RemoteScript {
             "fi;",
             "fi;",
             "fi;",
+            "if [ $((N % \(extrasEvery))) = 0 ]; then for H in $CERTS; do END=$($T openssl s_client -connect $H:443 -servername $H </dev/null 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null); echo \"##CERT $H $END\"; done; fi;",
             "echo \"##END\";",
             "N=$((N + 1));",
             "sleep 2 || exit;",
             "done",
-        ].joined(separator: " ")
+        ]
+        if certs.isEmpty { lines.removeAll { $0.contains("for H in $CERTS") } }
+        return lines.joined(separator: " ")
     }
 
     /// The single remote command string handed to ssh (interpreted by the user's login shell).
-    public static func remoteCommand(services: [String] = []) -> String {
-        "sh -c '" + script(services: services) + "'"
+    public static func remoteCommand(services: [String] = [], certHosts: [String] = []) -> String {
+        "sh -c '" + script(services: services, certHosts: certHosts) + "'"
     }
 
     /// Full argument list for /usr/bin/ssh.
@@ -200,7 +243,7 @@ public enum RemoteScript {
         if let id = s.identityFile?.trimmingCharacters(in: .whitespaces), !id.isEmpty {
             args += ["-i", (id as NSString).expandingTildeInPath]
         }
-        args += ["--", s.user.isEmpty ? s.host : "\(s.user)@\(s.host)", remoteCommand(services: s.services)]
+        args += ["--", s.user.isEmpty ? s.host : "\(s.user)@\(s.host)", remoteCommand(services: s.services, certHosts: s.certHosts)]
         return args
     }
 }
@@ -243,6 +286,24 @@ public struct DockerSummary: Equatable, Sendable, Codable {
     public init(running: Int, total: Int) { self.running = running; self.total = total }
 }
 
+public struct DockerContainer: Equatable, Sendable, Codable, Identifiable {
+    public var id: String { name }
+    public var name: String
+    public var state: String
+    public init(name: String, state: String) { self.name = name; self.state = state }
+    public var isRunning: Bool { state == "running" }
+}
+
+public struct CertificateStatus: Equatable, Sendable, Codable, Identifiable {
+    public var id: String { host }
+    public var host: String
+    public var notAfter: Date?
+    public var daysRemaining: Int?
+    public init(host: String, notAfter: Date?, daysRemaining: Int?) {
+        self.host = host; self.notAfter = notAfter; self.daysRemaining = daysRemaining
+    }
+}
+
 public struct RawSample: Sendable {
     public var cpuTotal: UInt64?
     public var cpuIdle: UInt64?
@@ -262,6 +323,8 @@ public struct RawSample: Sendable {
     public var rebootRequired: Bool?
     public var services: [ServiceState] = []
     public var docker: DockerSummary?
+    public var containers: [DockerContainer] = []
+    public var certificates: [CertificateStatus] = []
     public var pendingUpdates: Int?
     public var arrival: TimeInterval = 0   // local monotonic time the block was completed
     public init() {}
@@ -360,7 +423,11 @@ public final class RemoteStreamParser: @unchecked Sendable {
                 if let b = bootSec, n > b { current.uptime = n - b }
             }
         }
-        if let states = dockerStates {
+        if !current.containers.isEmpty {
+            current.docker = DockerSummary(
+                running: current.containers.filter(\.isRunning).count,
+                total: current.containers.count)
+        } else if let states = dockerStates {
             current.docker = DockerSummary(running: states.filter { $0 == "running" }.count, total: states.count)
         }
         current.arrival = now
@@ -408,6 +475,10 @@ public final class RemoteStreamParser: @unchecked Sendable {
                     current.services.append(ServiceState(name: name, state: parts.count > 1 ? parts[1] : ""))
                 }
             case "##UPDATES": current.pendingUpdates = Int(value)
+            case "##DOCKC":
+                if let container = RemoteParse.container(from: value) { current.containers.append(container) }
+            case "##CERT":
+                if let cert = RemoteParse.certificate(from: value) { current.certificates.append(cert) }
             case "##DF": section = "df"
             case "##NET": section = "net"
             case "##NETSTAT": section = "netstat"
@@ -460,6 +531,40 @@ public final class RemoteStreamParser: @unchecked Sendable {
 }
 
 public enum RemoteParse {
+    /// "name|running" from `docker ps --format {{.Names}}|{{.State}}`.
+    public static func container(from value: String) -> DockerContainer? {
+        let parts = value.split(separator: "|", maxSplits: 1).map { String($0).trimmingCharacters(in: .whitespaces) }
+        guard let name = parts.first, ServerConfig.isValidContainerName(name) else { return nil }
+        let state = parts.count > 1 ? parts[1] : ""
+        guard !state.contains(" ") else { return nil }
+        return DockerContainer(name: name, state: state)
+    }
+
+    /// "example.com notAfter=Nov 12 23:59:59 2026 GMT". A missing date means the check failed.
+    public static func certificate(from value: String, now: Date = Date()) -> CertificateStatus? {
+        let parts = value.split(separator: " ", maxSplits: 1).map(String.init)
+        guard let host = parts.first, ServerConfig.isValidCertHost(host) else { return nil }
+        let rest = parts.count > 1 ? parts[1] : ""
+        guard let notAfter = notAfterDate(rest) else {
+            return CertificateStatus(host: host, notAfter: nil, daysRemaining: nil)
+        }
+        let days = Int((notAfter.timeIntervalSince(now) / 86_400).rounded(.down))
+        return CertificateStatus(host: host, notAfter: notAfter, daysRemaining: days)
+    }
+
+    /// OpenSSL `x509 -noout -enddate` line.
+    public static func notAfterDate(_ text: String) -> Date? {
+        let raw = text.replacingOccurrences(of: "notAfter=", with: "").trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "MMM d HH:mm:ss yyyy zzz"
+        if let date = formatter.date(from: raw) { return date }
+        formatter.dateFormat = "MMM dd HH:mm:ss yyyy zzz"
+        return formatter.date(from: raw)
+    }
+
     /// "cpu  user nice system idle iowait irq softirq steal guest guest_nice"
     /// total = first 8 fields (guest time is already included in user/nice); idle = idle + iowait.
     public static func cpuLine(_ line: String) -> (total: UInt64, idle: UInt64)? {
@@ -614,6 +719,9 @@ public struct RemoteSnapshot: Equatable, Sendable {
     public var rebootRequired: Bool?
     public var services: [ServiceState] = []
     public var docker: DockerSummary?
+    public var containers: [DockerContainer] = []
+    public var certificates: [CertificateStatus] = []
+    public var extrasFresh = false
     public var pendingUpdates: Int?
 
     public init() {}
@@ -663,6 +771,14 @@ public struct RemoteMetrics {
             s.rebootRequired = r.rebootRequired
             s.services = r.services
             s.docker = r.docker
+            s.containers = r.containers
+            s.extrasFresh = true
+        } else {
+            s.extrasFresh = false
+        }
+        if !r.certificates.isEmpty || r.extrasRan {
+            // Certificates are checked on the same slow cadence, including macOS servers.
+            if r.extrasRan || !r.certificates.isEmpty { s.certificates = r.certificates }
         }
         if let n = r.pendingUpdates { s.pendingUpdates = n }
         s.hasData = true

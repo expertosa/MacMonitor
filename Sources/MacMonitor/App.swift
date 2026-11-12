@@ -95,7 +95,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return AlertInput.Server(id: srv.id, name: srv.config.name, offline: offline,
                                      online: srv.status == .online && snap.hasData, cpu: snap.cpu,
                                      disks: snap.disks, services: snap.services,
-                                     rebootRequired: snap.rebootRequired == true)
+                                     rebootRequired: snap.rebootRequired == true,
+                                     cpuPercent: srv.config.cpuPercent, diskPercent: srv.config.diskPercent,
+                                     sslWarnDays: srv.config.sslWarnDays,
+                                     containers: snap.containers, certificates: snap.certificates,
+                                     extrasFresh: snap.extrasFresh)
         }
         widgetBridge.update(servers: remotes.servers.map(\.widgetServer))
         alerts.evaluate(input)

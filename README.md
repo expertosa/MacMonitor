@@ -33,7 +33,10 @@ and your **Linux and Mac servers over plain SSH**, with nothing to install on th
 
 **Alerts** (macOS notifications, off by default)
 - Sustained high CPU, critical memory pressure, disk almost full, low battery.
-- Server unreachable / back online, server CPU or disk, a watched service stops, reboot required.
+- Server unreachable / back online, server CPU or disk (optional per-server thresholds), a watched
+  service stops, a Docker container stops, a TLS certificate is close to expiry, reboot required.
+- The same alerts can also go to Telegram, Slack (incoming webhook) or any HTTPS webhook.
+  Bot tokens and webhook URLs are stored in the login Keychain.
 
 ## Install
 

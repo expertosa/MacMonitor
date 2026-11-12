@@ -45,6 +45,50 @@ enum ServerSecrets {
     static func has(_ id: UUID, _ kind: Kind) -> Bool { get(id, kind) != nil }
 }
 
+/// Bot tokens and webhook URLs for alert delivery. Never written to user defaults.
+enum AlertSecrets {
+    enum Kind: String {
+        case telegramToken, telegramChat, slackWebhook, webhookURL
+    }
+    private static let service = "com.tweetso.macmonitor.alerts"
+
+    static func get(_ kind: Kind) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: kind.rawValue,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    @discardableResult
+    static func set(_ value: String?, _ kind: Kind) -> Bool {
+        let base: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: kind.rawValue,
+        ]
+        SecItemDelete(base as CFDictionary)
+        guard let value, !value.isEmpty else { return true }
+        var add = base
+        add[kSecValueData as String] = Data(value.utf8)
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        add[kSecAttrLabel as String] = "MacMonitor alert \(kind.rawValue)"
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    }
+
+    static func has(_ kind: Kind) -> Bool { get(kind) != nil }
+
+    static func snapshot() -> AlertChannels.Secrets {
+        AlertChannels.Secrets(telegramToken: get(.telegramToken), telegramChat: get(.telegramChat),
+                               slackWebhook: get(.slackWebhook), webhookURL: get(.webhookURL))
+    }
+}
+
 /// Host keys accepted on first use by the built-in client ("type base64"), per server.
 enum KnownHostKeys {
     private static let key = "knownHostKeys"

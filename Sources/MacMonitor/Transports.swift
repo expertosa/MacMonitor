@@ -105,7 +105,7 @@ final class BuiltInTransport: RemoteTransport, @unchecked Sendable {
 
     init(config: ServerConfig) {
         let id = config.id
-        command = RemoteScript.remoteCommand(services: config.services)
+        command = RemoteScript.remoteCommand(services: config.services, certHosts: config.certHosts)
         let creds = BuiltInSSHSession.Credentials(
             username: config.user.isEmpty ? NSUserName() : config.user,
             privateKey: config.auth == .key ? ServerSecrets.get(id, .privateKey) : nil,
